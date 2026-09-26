@@ -22,6 +22,25 @@ npm run preview
 
 `dist/` — готовый статический сайт. Для размещения в подкаталоге: `npm run build -- --base=./`. Отдельный lint не настроен; строгая проверка TypeScript включена в build.
 
+## Cloudflare Workers (static assets)
+
+Wrangler настроен в `wrangler.jsonc`: имя проекта — `ruleshift`, каталог статических файлов — `./dist`. Worker-скрипт и backend не используются.
+
+Из корня проекта выполните:
+
+```sh
+npm run build
+npx wrangler deploy
+```
+
+Перед первым развёртыванием авторизуйтесь в своём Cloudflare-аккаунте командой `npx wrangler login`. Команда deploy публикует уже собранный `dist/`, поэтому после изменений сначала выполняйте build. Wrangler установлен как dev dependency; его локальные служебные файлы `.wrangler/` исключены из Git.
+
+Проверить конфигурацию без публикации можно после сборки:
+
+```sh
+npx wrangler deploy --dry-run
+```
+
 ## Игра
 
 - 3 HP, 1 секунда неуязвимости после урона. 10 очков за секунду и 100 за правило без нарушений.
