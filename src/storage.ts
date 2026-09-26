@@ -1,9 +1,13 @@
-const KEY = 'ruleshift.best';
+import { profile, persistProfile } from "./profile";
+
+// Preserve the original storage API while using the versioned profile as the source of truth.
 export function getBest(): number {
-  try { const value = Number(localStorage.getItem(KEY)); return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0; } catch { return 0; }
+  return profile.stats.best;
 }
 export function saveBest(score: number): number {
-  const best = Math.max(score, getBest());
-  try { localStorage.setItem(KEY, String(best)); } catch { /* Gameplay remains available when storage is disabled. */ }
-  return best;
+  if (Number.isFinite(score) && score > profile.stats.best) {
+    profile.stats.best = Math.floor(score);
+    persistProfile();
+  }
+  return profile.stats.best;
 }

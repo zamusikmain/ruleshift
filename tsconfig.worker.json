@@ -2,14 +2,14 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "allowSyntheticDefaultImports": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src"]
+  "include": ["worker", "src/shared", "src/config.ts", "src/locales/en.ts"]
 }

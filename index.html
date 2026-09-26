@@ -1,2 +1,39 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta name="theme-color" content="#080d15"/><meta name="description" content="RULESHIFT — a neon survival arcade. Rules change. Survive."/><title>RULESHIFT — Rules change. Survive.</title></head><body><main id="app"><header><a class="brand" href="./"><span class="brand-mark">/</span> RULESHIFT<span class="version">01</span></a><span class="header-note"><i></i> SURVIVAL PROTOCOL</span></header><section id="stage" aria-label="RULESHIFT game"><div id="game"></div><div id="overlay"></div><div id="pause" hidden>PAUSED<span>Click the arena to resume</span></div></section><footer><span>ADAPT. REACT. REPEAT.</span><span>DESKTOP ARCADE <b> / </b> V.1.0</span></footer></main><script type="module" src="/src/main.ts"></script></body></html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#080d15" />
+    <meta
+      name="description"
+      content="RULESHIFT — a neon survival arcade. Rules change. Survive."
+    />
+    <title>RULESHIFT</title>
+  </head>
+  <body>
+    <main id="app">
+      <header>
+        <a class="brand" href="./"
+          ><span class="brand-mark">/</span> RULESHIFT<span class="version"
+            >01</span
+          ></a
+        ><span class="header-note" id="header-note"></span>
+      </header>
+      <section id="stage" aria-label="RULESHIFT">
+        <div id="game"></div>
+        <div id="hud" hidden></div>
+        <div id="overlay"></div>
+        <button id="pause-button" class="chip" hidden>Ⅱ</button>
+        <div id="joystick" role="group"><span></span></div>
+        <div id="pause" hidden></div>
+      </section>
+      <footer><span id="motto"></span><span id="edition"></span></footer>
+    </main>
+    <div id="rotate" hidden></div>
+    <div id="toast" role="status" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

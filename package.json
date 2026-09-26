@@ -5,15 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json",
+    "dev:online": "wrangler dev --ip 127.0.0.1 --port 8787",
     "test": "node --test tests/*.test.mjs",
+    "test:online": "node tests/online.smoke.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "phaser": "^3.90.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260926.1",
     "typescript": "~5.9.3",
     "vite": "^7.1.7",
     "wrangler": "^4.141.0"

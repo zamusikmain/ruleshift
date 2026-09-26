@@ -5,3 +5,5 @@ dist/
 .npm-cache/
 *.local
 *.log
+.dev.vars*
+.env*
