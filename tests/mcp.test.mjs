@@ -350,9 +350,17 @@ test("auth fails closed for missing, invalid, expired, ambiguous and unconfigure
   h.env.MCP_KEYS = JSON.stringify(keys);
   assert.equal((await h.request({})).status, 401);
   h.env.MCP_KEYS = JSON.stringify([keys[1], keys[1]]);
-  assert.equal((await h.request({})).status, 503);
+  let response = await h.request({});
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "auth_secret_invalid" });
+  h.env.MCP_KEYS = "not-json";
+  response = await h.request({});
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "auth_secret_invalid" });
   delete h.env.MCP_KEYS;
-  assert.equal((await h.request({})).status, 503);
+  response = await h.request({});
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "auth_secret_missing" });
 });
 
 test("HTTP transport rejects bad origins, malformed JSON, batch, huge streamed body and unsupported versions", async () => {

@@ -13,17 +13,28 @@ const keysSchema = z
   .min(1)
   .max(32);
 
+export class AuthConfigurationError extends Error {
+  constructor(readonly code: "auth_secret_missing" | "auth_secret_invalid") {
+    super(code);
+  }
+}
+
 export async function authenticate(
   header: string | null,
   configured: string | undefined,
 ): Promise<Principal | null> {
-  if (!configured) throw new Error("auth_not_configured");
-  const keys = keysSchema.parse(JSON.parse(configured));
+  if (!configured) throw new AuthConfigurationError("auth_secret_missing");
+  let keys: z.infer<typeof keysSchema>;
+  try {
+    keys = keysSchema.parse(JSON.parse(configured));
+  } catch {
+    throw new AuthConfigurationError("auth_secret_invalid");
+  }
   if (
     new Set(keys.map((key) => key.id)).size !== keys.length ||
     new Set(keys.map((key) => key.sha256)).size !== keys.length
   )
-    throw new Error("invalid_keyring");
+    throw new AuthConfigurationError("auth_secret_invalid");
   const token = /^Bearer ([A-Za-z0-9_-]{43,256})$/.exec(header ?? "")?.[1];
   if (!token) return null;
   const digest = await crypto.subtle.digest(

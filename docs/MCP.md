@@ -2,6 +2,8 @@
 
 This repository contains a real Model Context Protocol server using the official TypeScript SDK and **stateless Streamable HTTP**, with JSON responses. The game UI does not import the MCP SDK. The existing `ruleshift` Worker keeps its URL, assets binding, WebSocket API and `GameRoom` migration.
 
+Production endpoint: `https://ruleshift-mcp.zamusik-play.workers.dev/mcp`. Production verification confirmed Bearer authentication, MCP `initialize`, discovery of the six read-only tools, successful calls to `get_game_status`, `get_game_config`, and `get_active_matches`, and private RPC through the `ruleshift#GameInspection` Service Binding. `MCP_WRITES_ENABLED` remains `false`, so operator write tools are not advertised or callable in production.
+
 ## Architecture and existing data
 
 ```text
@@ -103,11 +105,11 @@ For the first rollout, `secret put` may ask to create the missing `ruleshift-mcp
 6. Writes are disabled in the checked-in config. To enable them deliberately, set `MCP_WRITES_ENABLED` to the string `"true"` in the MCP Worker configuration and redeploy that Worker. All credentials still have independent roles. Keep this value consistent with the config used by later CI deployments.
 7. Browser-based MCP clients additionally need their exact origin in `MCP_ALLOWED_ORIGINS`, a JSON array string. Native SDK clients need no Origin allowlist entry.
 
-Expected endpoint with the existing account's workers.dev subdomain:
+Production endpoint:
 
 `https://ruleshift-mcp.zamusik-play.workers.dev/mcp`
 
-This URL is a deployment plan, **not confirmation of a published endpoint**. Use the URL Wrangler returns. The game stays at `https://ruleshift.zamusik-play.workers.dev`.
+The game remains at `https://ruleshift.zamusik-play.workers.dev`. The game and MCP Workers are deployed separately; the existing game pipeline uses `wrangler.jsonc` and does not publish `wrangler.mcp.jsonc`.
 
 ## Client connection and agent examples
 
@@ -130,13 +132,13 @@ Useful agent workflows:
 
 ## Tests and manual QA
 
-Local verification on 2026-09-27: **49/49 tests passed** (38 existing and 11 new); client, game Worker and MCP Worker TypeScript checks passed; the Vite production build passed. Both game and MCP Wrangler dry-runs passed. The existing Phaser bundle-size warning remains. No commit, push, secret provisioning or deployment was performed. No real workerd, production RPC or external-client end-to-end verification is claimed.
+Verification on 2026-09-27: **49/49 tests passed** (38 existing and 11 new); client, game Worker and MCP Worker TypeScript checks passed; the Vite production build passed. Both game and MCP Wrangler dry-runs passed. The existing Phaser bundle-size warning remains. A subsequent production smoke-test confirmed the deployed endpoint, Bearer authentication, MCP initialization/discovery, three read-only tool calls, Durable Object access, and the private game Service Binding. The production credential and `MCP_KEYS` value are not stored in this repository.
 
 Files added: `mcp/auth.ts`, `mcp/contracts.ts`, `mcp/control.ts`, `mcp/index.ts`, `mcp/server.ts`, `worker/observability.ts`, `wrangler.mcp.jsonc`, `tsconfig.mcp.json`, `tests/mcp.test.mjs`, `scripts/mcp-client.mjs`, and this document. Files updated: `worker/index.ts` (private read adapter), `tests/worker.test.mjs` (binding isolation), `package.json` / `package-lock.json` (SDK, Zod and checks), and `README.md` (integration overview). No `src/` gameplay, client or localization file was changed for MCP.
 
 Automated tests use the **real official MCP server, transport and client SDK** with in-process HTTP Request/Response handling. Only Cloudflare RPC/storage are represented by deterministic adapters. Tests cover negotiation, discovery, all eight tools, role separation, write disablement, strict validation, malformed requests, size/origin/version checks, expiry, redaction, backend errors, bounded shared limits, concurrent revision conflicts and atomic storage/audit failure. Existing gameplay tests remain part of `npm test`.
 
-These tests do not certify deployed Cloudflare RPC, Durable Object persistence, TLS or external MCP client behavior. The known Windows `workerd.exe EPERM` restriction is not worked around; starting the local runtime is optional when that restriction is resolved. `npm run dev:mcp` is for an environment where workerd works and the game service binding has been configured locally; do not use remote development as an implicit deployment.
+Automated tests alone do not certify Cloudflare persistence or all external MCP clients. The completed production smoke-test covers TLS, authentication, initialize, discovery, selected read calls, the control Durable Object, and Service Binding RPC. Write tools, audit persistence across restarts, browser-origin CORS, throttling under load, and OAuth-only clients remain outside that smoke-test. The known Windows `workerd.exe EPERM` restriction is not worked around; starting the local runtime is optional when that restriction is resolved. `npm run dev:mcp` is for an environment where workerd works and the game service binding has been configured locally; do not use remote development as an implicit deployment.
 
 After authorized production deployment, verify:
 

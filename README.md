@@ -62,7 +62,7 @@ Desktop browser layouts were inspected at 844 × 390 and 1024 × 768. These are 
 
 ## AI Agent / MCP Integration
 
-RULESHIFT includes a separate **Remote MCP Server** using the official Model Context Protocol SDK and stateless Streamable HTTP. It inspects the live game's redacted authoritative state through a private Cloudflare Service Binding. It does not change Solo, gameplay rules, the public game URL or the multiplayer WebSocket protocol.
+RULESHIFT includes a separate production **Remote MCP Server** using the official Model Context Protocol SDK and stateless Streamable HTTP. It inspects the live game's redacted authoritative state through a private Cloudflare Service Binding. It does not change Solo, gameplay rules, the public game URL or the multiplayer WebSocket protocol.
 
 ```text
 AI agent / MCP client --HTTPS + bearer token--> ruleshift-mcp Worker
@@ -72,11 +72,13 @@ AI agent / MCP client --HTTPS + bearer token--> ruleshift-mcp Worker
                               ruleshift / GameInspection --> GameRoom
 ```
 
-Read tools: `get_game_status`, `get_active_matches`, `get_match_details`, `get_game_config`, `get_server_stats`, `get_recent_events`. Lists/statistics cover only explicitly monitored rooms; recent events are the bounded MCP audit, not invented gameplay history. The existing backend has no global match registry or lifetime metrics.
+Production endpoint: `https://ruleshift-mcp.zamusik-play.workers.dev/mcp`. A production smoke-test has confirmed Bearer authentication, MCP `initialize`, `tools/list`, `get_game_status`, `get_game_config`, `get_active_matches`, and the private `ruleshift#GameInspection` Service Binding.
+
+The six currently discoverable read-only tools are `get_game_status`, `get_active_matches`, `get_match_details`, `get_game_config`, `get_server_stats`, and `get_recent_events`. Lists/statistics cover only explicitly monitored rooms; recent events are the bounded MCP audit, not invented gameplay history. The existing backend has no global match registry or lifetime metrics.
 
 Write tools: `watch_room` and `unwatch_room`, protected by operator credentials, a disabled-by-default write flag, strict validation, revision checks and atomic audit logging. They manage monitoring without modifying a match. Human confirmation is a responsibility of the MCP client/agent before calling a write tool.
 
-Deploy the game backend update first, then deploy `wrangler.mcp.jsonc` separately after provisioning its `MCP_KEYS` secret. Planned endpoint: `https://ruleshift-mcp.zamusik-play.workers.dev/mcp` (not published by this implementation). Connect using Streamable HTTP with a provisioned bearer Authorization header. OAuth-only clients are not supported by this initial authentication model.
+The MCP Worker remains a separate deployment configured by `wrangler.mcp.jsonc`; the normal game pipeline does not publish it. `MCP_KEYS` is stored only as a Cloudflare Secret and `MCP_WRITES_ENABLED` remains `false`. Connect using Streamable HTTP with a provisioned Bearer Authorization header. OAuth-only clients are not supported by this authentication model.
 
 See [MCP architecture, security, client examples and deployment instructions](docs/MCP.md). A read-only SDK example is available at `scripts/mcp-client.mjs`; set `RULESHIFT_MCP_URL` and `RULESHIFT_MCP_TOKEN` through your local secret manager before running it. `npm test` includes protocol tests with the real SDK; `npm run check:mcp` performs an unpublished Cloudflare bundling dry run.
 

@@ -1,5 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { authenticate, allowedOrigin } from "./auth";
+import { AuthConfigurationError, authenticate, allowedOrigin } from "./auth";
 import { createMcpServer } from "./server";
 import { TOOL_NAMES, type AuditInput, type ControlApi, type McpEnv } from "./contracts";
 export { McpControl } from "./control";
@@ -87,8 +87,12 @@ export default {
         request.headers.get("Authorization"),
         env.MCP_KEYS,
       );
-    } catch {
-      return response({ error: "service_not_configured" }, 503, cors);
+    } catch (error) {
+      const code =
+        error instanceof AuthConfigurationError
+          ? error.code
+          : "auth_configuration_unavailable";
+      return response({ error: code }, 503, cors);
     }
     if (!actor)
       return response({ error: "unauthorized" }, 401, {
