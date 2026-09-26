@@ -1,5 +1,10 @@
 import Phaser from "phaser";
-import { createBody, moveBody, damageBody } from "./shared/movement";
+import {
+  createBody,
+  moveBody,
+  damageBody,
+  activateDash,
+} from "./shared/movement";
 import { UnifiedInput } from "./input";
 import { createPlayerView } from "./playerView";
 import { profile } from "./profile";
@@ -35,10 +40,16 @@ export class Player {
   get y(): number {
     return this.body.y;
   }
-  update(dt: number): void {
+  update(dt: number, frozen = false): void {
     const x = this.x,
       y = this.y;
-    moveBody(this.state, this.input.read(), dt);
+    const movement = this.input.read();
+    if (this.input.consumeDash()) activateDash(this.state, movement, frozen);
+    if (frozen && Math.hypot(movement.x, movement.y) < 0.1) {
+      this.state.vx = this.state.vy = 0;
+      this.state.dashTime = 0;
+    }
+    moveBody(this.state, movement, dt);
     this.body.setPosition(this.state.x, this.state.y);
     this.body.alpha =
       this.invulnerable > 0

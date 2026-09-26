@@ -1,6 +1,8 @@
 import { validateName, validColor } from "./identity";
+import type { Pickup } from "./pickups";
 import type { Body } from "./movement";
 import type { RuleSnapshot } from "./ruleEngine";
+export const PROTOCOL_VERSION = 2;
 export type ErrorCode =
   | "roomNotFound"
   | "roomFull"
@@ -9,12 +11,13 @@ export type ErrorCode =
   | "rateLimit"
   | "roomExpired"
   | "connectionLost"
+  | "versionMismatch"
   | "matchReset";
 export type ClientMessage =
-  | { type: "hello"; name: string; color: number; token?: string }
+  | { type: "hello"; name: string; color: number; token?: string; protocol?: number }
   | { type: "input"; x: number; y: number }
   | { type: "ready"; ready: boolean }
-  | { type: "start" | "rematch" | "leave" | "ping" };
+  | { type: "start" | "rematch" | "leave" | "ping" | "dash" | "shockwave" };
 export interface PlayerSnapshot extends Body {
   id: string;
   name: string;
@@ -28,9 +31,13 @@ export interface PlayerSnapshot extends Body {
   streak: number;
   bestStreak: number;
   flawless: number;
+  perfects: number;
+  nearMisses: number;
+  placement: number;
 }
 export interface RoomSnapshot {
   type: "state";
+  protocol: number;
   code: string;
   phase: "lobby" | "countdown" | "playing" | "results";
   hostId: string;
@@ -40,6 +47,9 @@ export interface RoomSnapshot {
   countdown: number;
   winnerId: string | null;
   rules: RuleSnapshot;
+  pickups: Pickup[];
+  suddenDeath: boolean;
+  arenaInset: number;
 }
 export type ServerMessage =
   | RoomSnapshot
@@ -59,11 +69,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
   }
   const keys = (...allowed: string[]) =>
     Object.keys(m).every((key) => ["type", ...allowed].includes(key));
-  if (m.type === "hello" && keys("name", "color", "token")) {
+  if (m.type === "hello" && keys("name", "color", "token", "protocol")) {
     const name = validateName(m.name);
     if (
       !name ||
       !validColor(m.color) ||
+      (m.protocol !== undefined && (typeof m.protocol !== "number" || !Number.isSafeInteger(m.protocol) || m.protocol < 1)) ||
       (m.token !== undefined &&
         (typeof m.token !== "string" || !/^[a-f0-9-]{36}$/.test(m.token)))
     )
@@ -72,6 +83,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       type: "hello",
       name,
       color: m.color,
+      ...(m.protocol !== undefined ? { protocol: m.protocol as number } : {}),
       ...(m.token ? { token: m.token as string } : {}),
     };
   }
@@ -93,7 +105,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     (m.type === "start" ||
       m.type === "rematch" ||
       m.type === "leave" ||
-      m.type === "ping") &&
+      m.type === "ping" ||
+      m.type === "dash" ||
+      m.type === "shockwave") &&
     keys()
   )
     return { type: m.type };

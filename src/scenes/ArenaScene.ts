@@ -19,7 +19,12 @@ import { drawArena } from "../arena";
 import { hideHud, showHud } from "../hud";
 import { isPortraitTouch, updateOrientation } from "../device";
 import { OnlineClient } from "../online/client";
+import { PickupSystem } from "../shared/pickups";
+import { FeatureView, showAbilities } from "../featureView";
+import { isFrozen } from "../shared/ruleEngine";
 export class ArenaScene extends Phaser.Scene {
+  private pickups = new PickupSystem();
+  private features?: FeatureView;
   private player?: Player;
   private rules?: RuleSystem;
   private running = false;
@@ -69,7 +74,9 @@ export class ArenaScene extends Phaser.Scene {
     });
   }
   private resetArena(): void {
-    this.controls.reset();
+    this.controls.setEnabled(false);
+    this.features?.destroy();
+    this.features = undefined;
     this.tweens.killAll();
     this.children.removeAll(true);
     drawArena(this);
@@ -106,10 +113,14 @@ export class ArenaScene extends Phaser.Scene {
     this.flawless = 0;
     this.scoring = new Scoring();
     this.player = new Player(this, this.controls);
+    this.pickups = new PickupSystem();
+    this.features = new FeatureView(this);
+    this.controls.setEnabled(true);
     profile.stats.soloGames++;
     notifyAchievements(unlockAchievements(profile));
     persistProfile();
     document.body.classList.add("playing");
+    updateOrientation();
     const pauseButton = document.querySelector<HTMLElement>("#pause-button")!;
     pauseButton.hidden = false;
     pauseButton.textContent = "Ⅱ";
@@ -121,12 +132,12 @@ export class ArenaScene extends Phaser.Scene {
       () => this.hit(),
       (count) => {
         const bonus = this.scoring.complete(count);
-        audio.play("success");
+        if (this.rules?.engine.state.event) this.scoring.bonus += 300;
         const success = label(
           this,
           center.x,
           177,
-          `${t("complete")} +${bonus} · ${t("streak")} ×${Math.min(5, this.scoring.streak)}`,
+          `${t("perfect")} +${bonus} · ${t("streak")} ×${Math.min(5, this.scoring.streak)}`,
           20,
           "#b9fa6a",
         ).setOrigin(0.5);
@@ -147,13 +158,14 @@ export class ArenaScene extends Phaser.Scene {
         this.saveProgress();
       },
       () => this.scoring.fail(),
+      () => this.scoring.nearMiss(),
     );
     if (isPortraitTouch()) this.setPaused(true);
   }
   private setPaused(paused: boolean): void {
     if (!this.running) return;
     this.paused = paused;
-    this.controls.reset();
+    this.controls.setEnabled(!paused);
     const panel = document.querySelector<HTMLElement>("#pause")!;
     panel.hidden = !paused;
     if (paused) {
@@ -197,12 +209,14 @@ export class ArenaScene extends Phaser.Scene {
       onComplete: () => group.destroy(),
     });
   }
-  private hit(): void {
+  private hit(): boolean {
     if (this.player?.damage()) {
       this.flawless = 0;
       this.scoring.fail();
       audio.play("damage");
+      return true;
     }
+    return false;
   }
   private saveProgress(): void {
     profile.stats.best = Math.max(
@@ -218,7 +232,8 @@ export class ArenaScene extends Phaser.Scene {
     this.running = false;
     this.saveProgress();
     hideHud();
-    this.controls.reset();
+    this.controls.setEnabled(false);
+    this.features?.hide();
     document.querySelector<HTMLElement>("#pause-button")!.hidden = true;
     this.add
       .rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x080d15, 0.85)
@@ -241,11 +256,27 @@ export class ArenaScene extends Phaser.Scene {
     const previousSecond = Math.floor(this.survival);
     this.survival += dt;
     this.flawless += dt;
-    this.player.update(dt);
+    this.player.update(dt, isFrozen(this.rules.engine.state));
+    this.pickups.update(dt, [this.player.state], this.rules.engine.state);
+    this.scoring.tick(dt, this.player.state.scoreTime > 0);
     this.rules.update(dt, this.survival);
+    this.features?.draw(
+      this.pickups.items,
+      [
+        {
+          ...this.player.state,
+          id: "solo",
+          perfects: this.scoring.perfects,
+          nearMisses: this.scoring.nearMisses,
+        },
+      ],
+      "solo",
+      dt,
+    );
     this.hudClock -= dt;
     if (this.hudClock <= 0) {
       this.hudClock = 0.1;
+      showAbilities(this.player.state, isFrozen(this.rules.engine.state));
       showHud(
         this.player.hp,
         this.scoring.score(this.survival),

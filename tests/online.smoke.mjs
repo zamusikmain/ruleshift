@@ -29,7 +29,7 @@ async function connect(code, name, token) {
     "WebSocket did not open",
   );
   client.send = (message) => socket.send(JSON.stringify(message));
-  client.send({ type: "hello", name, color: 0, ...(token ? { token } : {}) });
+  client.send({ type: "hello", protocol: 2, name, color: 0, ...(token ? { token } : {}) });
   await waitFor(() => client.welcome || client.error, "No handshake response");
   return client;
 }

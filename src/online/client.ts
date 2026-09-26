@@ -13,18 +13,20 @@ import {
   toast,
 } from "../ui";
 import { validRoomCode } from "../shared/identity";
+import { PROTOCOL_VERSION } from "../shared/protocol";
 import type {
   ClientMessage,
   RoomSnapshot,
   ServerMessage,
 } from "../shared/protocol";
-import { RuleView, SYMBOLS } from "../ruleView";
-import { RULE_DEFS } from "../shared/ruleEngine";
+import { RuleView, ruleTitle, ruleSubtitle } from "../ruleView";
+import { RULE_DEFS, isFrozen } from "../shared/ruleEngine";
 import { createPlayerView } from "../playerView";
 import { showHud, hideHud } from "../hud";
-import { isPortraitTouch } from "../device";
+import { isPortraitTouch, updateOrientation } from "../device";
 import { audio } from "../audio";
 import { formatTime } from "../config";
+import { FeatureView, showAbilities } from "../featureView";
 export class OnlineClient {
   private socket?: WebSocket;
   private code = "";
@@ -41,6 +43,8 @@ export class OnlineClient {
   private renderKey = "";
   private serial = -1;
   private view: RuleView;
+  private features: FeatureView;
+  private wasSuddenDeath = false;
   private players = new Map<string, Phaser.GameObjects.Container>();
   private priorHp = new Map<string, number>();
   private countedMatch = 0;
@@ -57,8 +61,10 @@ export class OnlineClient {
     private announce: (title: string, subtitle: string, color: number) => void,
   ) {
     this.view = new RuleView(scene);
+    this.features = new FeatureView(scene);
   }
   showMenu(error?: TextKey): void {
+    this.controls.setEnabled(false);
     this.renderKey = "menu";
     this.hidePlayers();
     this.snapshot = undefined;
@@ -88,6 +94,7 @@ export class OnlineClient {
     });
   }
   private connecting(reconnect = false): void {
+    this.controls.setEnabled(false);
     panel(
       t(reconnect ? "reconnecting" : "connecting"),
       `${button("cancel", "back", true)}`,
@@ -155,6 +162,7 @@ export class OnlineClient {
         "roomExpired",
         "connectionLost",
         "matchReset",
+        "versionMismatch",
       ].includes(value)
       ? (value as TextKey)
       : "unavailable";
@@ -171,6 +179,7 @@ export class OnlineClient {
     socket.onopen = () => {
       this.send({
         type: "hello",
+        protocol: PROTOCOL_VERSION,
         name: profile.name,
         color: profile.color,
         ...(this.token ? { token: this.token } : {}),
@@ -246,11 +255,26 @@ export class OnlineClient {
         ? { x: 0, y: 0 }
         : this.controls.read();
     this.send({ type: "input", ...input });
+    if (this.controls.consumeDash()) this.send({ type: "dash" });
+    if (this.controls.consumeWave()) this.send({ type: "shockwave" });
   }
   private receive(state: RoomSnapshot): void {
+    if (state.protocol !== PROTOCOL_VERSION) {
+      this.intentional = true;
+      clearInterval(this.inputTimer);
+      this.socket?.close();
+      this.showMenu("versionMismatch");
+      return;
+    }
     this.snapshot = state;
     const me = state.players.find((p) => p.id === this.id);
     if (!me) return;
+    this.controls.setEnabled(
+      state.phase === "playing" &&
+        me.hp > 0 &&
+        !document.hidden &&
+        !isPortraitTouch(),
+    );
     if (
       (state.phase === "countdown" || state.phase === "playing") &&
       this.countedMatch !== state.matchId
@@ -260,6 +284,8 @@ export class OnlineClient {
       this.accountedChaos = 0;
       this.serial = -1;
       this.priorHp.clear();
+      this.features.reset();
+      this.wasSuddenDeath = false;
       profile.stats.onlineGames++;
       persistProfile();
     }
@@ -295,12 +321,17 @@ export class OnlineClient {
         clearMenu();
         this.controls.reset();
         document.body.classList.add("playing", "online-match");
+        updateOrientation();
         const leave =
           document.querySelector<HTMLButtonElement>("#pause-button")!;
         leave.hidden = false;
         leave.textContent = "×";
         leave.setAttribute("aria-label", t("leave"));
         this.renderKey = "playing";
+      }
+      if (state.suddenDeath && !this.wasSuddenDeath) {
+        this.wasSuddenDeath = true;
+        this.announce(t("suddenDeath"), t("suddenDeathHint"), 0xff647d);
       }
       if (
         state.rules.phase === "announce" &&
@@ -309,12 +340,8 @@ export class OnlineClient {
         this.serial = state.rules.serial;
         const ids = state.rules.ids;
         this.announce(
-          ids.map((id) => t(RULE_DEFS[id].name)).join(" + "),
-          ids.length > 1
-            ? t("chaos")
-            : t(RULE_DEFS[ids[0]].description, {
-                symbol: SYMBOLS[state.rules.symbol],
-              }),
+          state.rules.event ? t("overload") : ruleTitle(state.rules),
+          ruleSubtitle(state.rules),
           RULE_DEFS[ids[0]].color,
         );
       }
@@ -331,7 +358,7 @@ export class OnlineClient {
     this.renderKey = key;
     this.hidePlayers();
     hideHud();
-    this.controls.reset();
+    this.controls.setEnabled(false);
     document.body.classList.remove("online-match");
     document.querySelector<HTMLElement>("#pause-button")!.hidden = true;
     if (state.phase === "countdown") {
@@ -372,6 +399,14 @@ export class OnlineClient {
     return `<ul class="player-list">${players.map((p) => `<li><i class="dot" style="background:${colorHex(p.color)}"></i><span>${escapeHtml(p.name)} ${p.id === this.id ? `(${t("you")})` : ""}</span><span class="player-status ${p.id === state.winnerId ? "winner" : ""}">${results ? `${p.id === state.winnerId ? t("victory") : t("eliminated")} · ${formatTime(p.eliminatedAt ?? state.time)}` : `${p.id === state.hostId ? `${t("host")} · ` : ""}${!p.connected ? t("disconnected") : t(p.ready ? "ready" : "notReady")}`}</span></li>`).join("")}</ul>`;
   }
   private results(state: RoomSnapshot): void {
+    const me = state.players.find((p) => p.id === this.id)!;
+    const winner = state.players.find((p) => p.id === state.winnerId);
+    const highlights = [
+      ["perfects", me.perfects],
+      ["nearMisses", me.nearMisses],
+      ["damageTaken", me.damageTaken],
+      ["pickupsCollected", me.pickups],
+    ] as const;
     panel(
       t(
         state.winnerId === this.id
@@ -380,7 +415,7 @@ export class OnlineClient {
             ? "draw"
             : "results",
       ),
-      `${this.roster(state, true)}${state.hostId === this.id ? button("rematch", "rematch") : `<p>${t("host")}: ${t("rematch")}</p>`}${button("leave", "leave", true)}`,
+      `${winner ? `<p>${t("winnerName", { name: escapeHtml(winner.name) })}</p>` : ""}<p>${t("placement", { n: me.placement })} · ${formatTime(me.eliminatedAt ?? state.time)}</p><div class="match-highlights">${highlights.map(([key, value]) => `<div>${t(key)}<b>${value}</b></div>`).join("")}</div><div class="result-actions">${state.hostId === this.id ? button("rematch", "rematch") : `<p>${t("host")}: ${t("rematch")}</p>`}${button("leave", "leave", true)}</div>${this.roster(state, true)}`,
       () => this.results(state),
     );
     if (state.hostId === this.id)
@@ -388,6 +423,7 @@ export class OnlineClient {
     bind("leave", () => this.leave());
   }
   private hidePlayers(): void {
+    this.features.hide();
     this.players.forEach((view) => view.setVisible(false));
     if (this.snapshot)
       this.view.draw({ ...this.snapshot.rules, phase: "rest" });
@@ -397,6 +433,13 @@ export class OnlineClient {
     if (!state || state.phase !== "playing" || this.renderKey !== "playing")
       return;
     this.view.draw(state.rules);
+    this.features.draw(
+      state.pickups,
+      state.players,
+      this.id,
+      dt,
+      state.arenaInset,
+    );
     for (const p of state.players) {
       let view = this.players.get(p.id);
       if (!view) {
@@ -413,7 +456,7 @@ export class OnlineClient {
           audio.play("damage");
           this.scene.cameras.main.shake(140, 0.003);
           if (p.hp === 0) {
-            this.controls.reset();
+            this.controls.setEnabled(false);
             toast(t("spectator"));
           }
         }
@@ -434,6 +477,7 @@ export class OnlineClient {
     this.hudClock -= dt;
     if (me && this.hudClock <= 0) {
       this.hudClock = 0.1;
+      showAbilities(me, isFrozen(state.rules));
       showHud(
         me.hp,
         me.score,
@@ -457,8 +501,9 @@ export class OnlineClient {
     clearInterval(this.inputTimer);
     this.socket?.close();
     this.socket = undefined;
-    this.controls.reset();
+    this.controls.setEnabled(false);
     this.hidePlayers();
+    this.features.destroy();
     this.players.forEach((view) => view.destroy());
     this.players.clear();
     document.body.classList.remove("playing", "online-match");

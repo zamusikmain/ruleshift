@@ -559,7 +559,7 @@ input {
   }
 }
 @media (pointer: coarse) {
-  .playing #joystick {
+  .controls-active #joystick {
     display: flex;
   }
 }
@@ -709,4 +709,129 @@ input {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Gameplay and preview share the same size and proportions. */
+#joystick,
+.joystick-disc {
+  width: var(--joystick-size, 136px);
+  height: var(--joystick-size, 136px);
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 2px solid #65dce977;
+  background: #102430b0;
+  align-items: center;
+  justify-content: center;
+}
+#joystick {
+  left: max(14px, env(safe-area-inset-left));
+  bottom: max(12px, env(safe-area-inset-bottom));
+}
+#joystick span,
+.joystick-disc span {
+  width: 36%;
+  height: 36%;
+  border-radius: 50%;
+  background: #65dce999;
+  border: 1px solid #a4eeff;
+}
+.joystick-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 188px;
+  pointer-events: none;
+}
+.joystick-disc {
+  display: flex;
+}
+.size-options {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ability-button {
+  display: none;
+  position: absolute;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  width: 86px;
+  height: 86px;
+  min-width: 0;
+  padding: 4px;
+  border-radius: 50%;
+  z-index: 4;
+  font-size: 12px;
+  touch-action: none;
+  border: 3px solid var(--cyan);
+  background: #122c3ded;
+  color: white;
+}
+#wave-button {
+  right: max(120px, calc(env(safe-area-inset-right) + 120px));
+  width: 74px;
+  height: 74px;
+  border-color: #c49bff;
+}
+@media (pointer: coarse) {
+  .controls-active .ability-button:not([hidden]) {
+    display: block;
+  }
+}
+body:not(.controls-active) #joystick,
+body:not(.controls-active) .ability-button {
+  display: none;
+  pointer-events: none;
+}
+#overlay button {
+  touch-action: manipulation;
+  min-height: 48px;
+}
+#game canvas {
+  pointer-events: none;
+}
+.match-highlights {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 12px 0;
+}
+.match-highlights div {
+  font-size: 11px;
+  color: var(--muted);
+}
+.match-highlights b {
+  display: block;
+  font-size: 20px;
+  color: var(--lime);
+}
+.result-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  position: sticky;
+  bottom: -14px;
+  background: #101a25;
+  padding: 8px;
+}
+.result-actions button {
+  min-width: 0;
+  flex: 1;
+}
+
+#ability-status {
+  display: none;
+  position: absolute;
+  bottom: 8px;
+  left: 28%;
+  right: 28%;
+  text-align: center;
+  color: #9db9c7;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 2;
+}
+.controls-active #ability-status {
+  display: block;
 }

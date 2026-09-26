@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { RuleEngine, RULE_DEFS } from "./shared/ruleEngine";
-import { RuleView, ruleStatus, SYMBOLS } from "./ruleView";
+import { RuleView, ruleStatus, ruleTitle, ruleSubtitle } from "./ruleView";
 import { t } from "./locales";
 import type { Player } from "./player";
 export const RULES = RULE_DEFS;
@@ -15,9 +15,10 @@ export class RuleSystem {
     scene: Phaser.Scene,
     private player: Player,
     private announce: (title: string, subtitle: string, color: number) => void,
-    private hit: () => void,
+    private hit: () => boolean | void,
     private reward: (count: number) => void,
     private fail: () => void = () => {},
+    private near: () => void = () => {},
   ) {
     this.view = new RuleView(scene);
   }
@@ -53,19 +54,19 @@ export class RuleSystem {
           radius: this.player.radius,
           distance: this.player.distance,
           hp: this.player.hp,
+          damageTaken: this.player.state?.damageTaken,
         },
       ],
       this.hit,
       (_, count) => this.reward(count),
       this.fail,
+      this.near,
     );
     const s = this.engine.state;
     if (s.serial !== serial)
       this.announce(
-        s.ids.map((id) => t(RULES[id].name)).join(" + "),
-        s.ids.length > 1
-          ? t("chaos")
-          : t(RULES[s.ids[0]].description, { symbol: SYMBOLS[s.symbol] }),
+        s.event ? t("overload") : ruleTitle(s),
+        ruleSubtitle(s),
         RULES[s.ids[0]].color,
       );
     this.view.draw(s);

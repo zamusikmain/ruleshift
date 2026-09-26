@@ -8,7 +8,15 @@ import {
   type Achievement,
 } from "./profile";
 import { validateName, PALETTE } from "./shared/identity";
+import { updateOrientation } from "./device";
 import { audio } from "./audio";
+import {
+  JOYSTICK_SIZES,
+  joystickSize,
+  setJoystickSize,
+  applyJoystickSize,
+  type JoystickSize,
+} from "./controlSettings";
 const overlay = document.querySelector<HTMLDivElement>("#overlay")!;
 let currentScreen: (() => void) | undefined;
 export const escapeHtml = (value: string): string =>
@@ -39,15 +47,17 @@ export function panel(
   currentScreen = rerender;
   overlay.innerHTML = `<div class="panel"><h2>${title}</h2>${content}</div>`;
   document.body.classList.remove("playing");
+  updateOrientation();
 }
 export function clearMenu(): void {
   overlay.innerHTML = "";
   currentScreen = undefined;
 }
 function settings(): string {
-  return `<div class="settings"><div aria-label="${t("language")}"><button id="en" class="chip ${getLocale() === "en" ? "selected" : ""}">EN</button><button id="ru" class="chip ${getLocale() === "ru" ? "selected" : ""}">RU</button></div><button id="sound" class="chip">${t(profile.sound ? "soundOn" : "soundOff")}</button></div>`;
+  return `<div class="settings"><div aria-label="${t("language")}"><button id="en" class="chip ${getLocale() === "en" ? "selected" : ""}">EN</button><button id="ru" class="chip ${getLocale() === "ru" ? "selected" : ""}">RU</button></div><button id="sound" class="chip">${t(profile.sound ? "soundOn" : "soundOff")}</button><button id="control-settings" class="chip">${t("controlSettings")}</button></div>`;
 }
 function bindSettings(): void {
+  bind("control-settings", () => showControls(currentScreen!));
   bind("en", () => setLocale("en"));
   bind("ru", () => setLocale("ru"));
   bind("sound", () => {
@@ -55,7 +65,31 @@ function bindSettings(): void {
     currentScreen?.();
   });
 }
+export function showControls(back: () => void): void {
+  const render = () => showControls(back);
+  panel(
+    t("controlSettings"),
+    `<p>${t("joystickSize")}</p><div class="size-options">${Object.keys(
+      JOYSTICK_SIZES,
+    )
+      .map(
+        (size) =>
+          `<button class="chip ${size === joystickSize ? "selected" : ""}" id="size-${size}" aria-pressed="${size === joystickSize}">${t(size as JoystickSize)}</button>`,
+      )
+      .join(
+        "",
+      )}</div><div class="joystick-preview" aria-label="${t("joystickPreview")}"><div class="joystick-disc"><span></span></div></div><p class="hint">${t("dashHelp")}</p>${button("back", "back")}`,
+    render,
+  );
+  for (const size of Object.keys(JOYSTICK_SIZES) as JoystickSize[])
+    bind(`size-${size}`, () => {
+      setJoystickSize(size);
+      render();
+    });
+  bind("back", back);
+}
 export function updateChrome(): void {
+  applyJoystickSize();
   document.documentElement.lang = getLocale();
   document.querySelector("#header-note")!.textContent = t("protocol");
   document.querySelector("#motto")!.textContent = t("motto");
@@ -82,6 +116,7 @@ export function showMenu(play: () => void, online: () => void): void {
   }
   currentScreen = render;
   document.body.classList.remove("playing", "online-match");
+  updateOrientation();
   overlay.innerHTML = `<div class="menu"><div class="eyebrow">${t("protocol")}</div><h1>RULE<span>SHIFT</span></h1><p class="tagline">${t("tagline")}</p><div class="identity"><i style="background:${colorHex(profile.color)}"></i>${escapeHtml(profile.name)}</div><div class="menu-actions">${button("solo", "solo")}${button("online", "online", true)}${button("profile", "profile", true)}</div><div class="best">${t("best")}: <strong>${profile.stats.best}</strong></div>${settings()}<button id="how" class="text-button">${t("how")}</button><div class="controls">${t("controls")}</div></div>`;
   bind("solo", play);
   bind("online", online);
@@ -91,7 +126,7 @@ export function showMenu(play: () => void, online: () => void): void {
     const help = () => {
       panel(
         t("how"),
-        `<p class="help">${t("howText")}</p>${button("back", "back")}`,
+        `<p class="help">${t("howText")}</p><p class="hint">${t("dashHelp")}</p><p class="hint">${t("pickupLegend")}</p>${button("back", "back")}`,
         help,
       );
       bind("back", render);

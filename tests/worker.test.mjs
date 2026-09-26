@@ -124,7 +124,7 @@ test("Worker routes assets, validates Origin/codes, creates room and upgrades so
     });
     assert.equal(response.status, 101);
     const socket = [...object.sessions.keys()].at(-1);
-    socket.input({ type: "hello", name, color: 0 });
+    socket.input({ type: "hello", protocol: 2, name, color: 0 });
     return socket;
   };
   const a = await connect("Замир"),
@@ -155,7 +155,7 @@ test("Worker socket rate and handshake limits reject abuse", async () => {
   const object = h.rooms.get(code).object;
   await h.fetch(`/api/rooms/${code}`, { headers: { Upgrade: "websocket" } });
   const socket = [...object.sessions.keys()][0];
-  socket.input({ type: "hello", name: "Tester", color: 0 });
+  socket.input({ type: "hello", protocol: 2, name: "Tester", color: 0 });
   for (let i = 0; i < 71; i++) socket.input({ type: "ping" });
   assert.equal(socket.closed, true);
   assert.equal(

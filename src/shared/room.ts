@@ -1,13 +1,24 @@
-import { createBody, moveBody, damageBody, type Movement } from "./movement";
-import { RuleEngine, type RandomSource } from "./ruleEngine";
+import {
+  createBody,
+  moveBody,
+  damageBody,
+  activateDash,
+  activateShockwave,
+  type Movement,
+} from "./movement";
+import { RuleEngine, isFrozen, type RandomSource } from "./ruleEngine";
 import { Scoring } from "./scoring";
 import { PALETTE } from "./identity";
+import { PROTOCOL_VERSION } from "./protocol";
 import type {
   ClientMessage,
   ErrorCode,
   PlayerSnapshot,
   RoomSnapshot,
 } from "./protocol";
+import { PickupSystem } from "./pickups";
+import { SUDDEN_DEATH_START, suddenDeathInset } from "./variants";
+import { ARENA } from "../config";
 interface Member {
   state: PlayerSnapshot;
   token: string;
@@ -30,11 +41,19 @@ export class Room {
   clock = 0;
   lastActivity = 0;
   rules: RuleEngine;
+  pickups: PickupSystem;
+  get suddenDeath(): boolean {
+    return this.time >= SUDDEN_DEATH_START;
+  }
+  get arenaInset(): number {
+    return suddenDeathInset(this.time);
+  }
   constructor(
     readonly code: string,
     private random?: RandomSource,
   ) {
     this.rules = new RuleEngine(random);
+    this.pickups = new PickupSystem(true, random);
   }
   join(
     id: string,
@@ -80,6 +99,9 @@ export class Room {
       streak: 0,
       bestStreak: 0,
       flawless: 0,
+      perfects: 0,
+      nearMisses: 0,
+      placement: 0,
     };
     this.members.set(id, {
       state,
@@ -107,6 +129,22 @@ export class Room {
       member.lastInput = this.clock;
       return true;
     }
+    if (message.type === "dash") {
+      if (this.phase !== "playing" || this.clock - member.lastInput > 0.3)
+        return false;
+      return activateDash(
+        member.state,
+        member.input,
+        isFrozen(this.rules.state),
+      );
+    }
+    if (message.type === "shockwave") {
+      if (this.phase !== "playing") return false;
+      return activateShockwave(
+        member.state,
+        [...this.members.values()].map((m) => m.state),
+      );
+    }
     this.lastActivity = this.clock;
     if (message.type === "leave") {
       this.remove(id);
@@ -131,6 +169,7 @@ export class Room {
       this.winnerId = null;
       this.matchId++;
       this.rules = new RuleEngine(this.random);
+      this.pickups = new PickupSystem(true, this.random);
       let index = 0;
       for (const m of this.members.values()) {
         const angle = (index++ / this.members.size) * Math.PI * 2;
@@ -145,6 +184,9 @@ export class Room {
             streak: 0,
             bestStreak: 0,
             flawless: 0,
+            perfects: 0,
+            nearMisses: 0,
+            placement: 0,
           },
         );
         m.scoring = new Scoring();
@@ -227,6 +269,13 @@ export class Room {
     this.lastActivity = this.clock;
     for (const m of this.members.values())
       if (m.state.hp > 0) {
+        if (
+          isFrozen(this.rules.state) &&
+          Math.hypot(m.input.x, m.input.y) < 0.1
+        ) {
+          m.state.vx = m.state.vy = 0;
+          m.state.dashTime = 0;
+        }
         moveBody(
           m.state,
           this.clock - m.lastInput <= 0.3 && m.state.connected
@@ -237,6 +286,30 @@ export class Room {
         m.flawless += dt;
         m.state.flawless = Math.max(m.state.flawless, m.flawless);
       }
+    this.pickups.update(
+      dt,
+      [...this.members.values()].map((m) => m.state),
+      this.rules.state,
+      !this.suddenDeath,
+      this.arenaInset,
+    );
+    const inset = this.arenaInset;
+    for (const m of this.members.values()) {
+      if (
+        m.state.hp > 0 &&
+        inset > 0 &&
+        (m.state.x - m.state.radius < ARENA.left + inset ||
+          m.state.x + m.state.radius > ARENA.right - inset ||
+          m.state.y - m.state.radius < ARENA.top + inset * 0.6 ||
+          m.state.y + m.state.radius > ARENA.bottom - inset * 0.6)
+      ) {
+        if (damageBody(m.state)) {
+          m.flawless = 0;
+          m.scoring.fail();
+          if (m.state.hp === 0) m.state.eliminatedAt = this.time;
+        }
+      }
+    }
     this.rules.update(
       dt,
       this.time,
@@ -247,10 +320,20 @@ export class Room {
           m.flawless = 0;
           m.scoring.fail();
           if (m.state.hp === 0) m.state.eliminatedAt = this.time;
+          return true;
         }
+        return false;
       },
-      (id, count) => this.members.get(id)!.scoring.complete(count),
+      (id, count) => {
+        const scoring = this.members.get(id)!.scoring;
+        scoring.complete(count);
+        if (this.rules.state.event) scoring.bonus += 300;
+      },
       (id) => this.members.get(id)!.scoring.fail(),
+      (id) => this.members.get(id)!.scoring.nearMiss(),
+      this.suddenDeath
+        ? 1 + Math.min(0.35, (this.time - SUDDEN_DEATH_START) / 180)
+        : 1,
     );
     for (const m of this.members.values())
       Object.assign(m.state, {
@@ -259,12 +342,15 @@ export class Room {
         bestStreak: m.scoring.bestStreak,
         rules: m.scoring.rules,
         chaos: m.scoring.chaos,
+        perfects: m.scoring.perfects,
+        nearMisses: m.scoring.nearMisses,
       });
     this.checkWinner();
     // A finite match prevents abandoned rooms from running indefinitely.
     if (this.time >= 600 && this.phase === "playing") {
       this.phase = "results";
       this.winnerId = null;
+      this.finalizePlacements();
     }
   }
   private checkWinner(): void {
@@ -273,7 +359,18 @@ export class Room {
       this.phase = "results";
       this.winnerId = alive[0]?.state.id ?? null;
       this.rules.state.hazards = [];
+      this.finalizePlacements();
     }
+  }
+  private finalizePlacements(): void {
+    const players = [...this.members.values()].map((m) => m.state);
+    for (const p of players)
+      p.placement =
+        1 +
+        players.filter(
+          (other) =>
+            (other.eliminatedAt ?? Infinity) > (p.eliminatedAt ?? Infinity),
+        ).length;
   }
   get expired(): boolean {
     return this.clock - this.lastActivity >= ROOM_IDLE_SECONDS;
@@ -281,6 +378,7 @@ export class Room {
   snapshot(): RoomSnapshot {
     return {
       type: "state",
+      protocol: PROTOCOL_VERSION,
       code: this.code,
       phase: this.phase,
       hostId: this.hostId,
@@ -290,6 +388,9 @@ export class Room {
       countdown: this.countdown,
       winnerId: this.winnerId,
       rules: this.rules.state,
+      pickups: this.pickups.items.map((item) => ({ ...item })),
+      suddenDeath: this.suddenDeath,
+      arenaInset: this.arenaInset,
     };
   }
 }

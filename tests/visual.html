@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <title>RULESHIFT local visual QA</title>
+  </head>
+  <body>
+    <nav
+      id="qa-controls"
+      style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        display: flex;
+        gap: 4px;
+        justify-content: center;
+        background: #080d15;
+        padding: 4px;
+      "
+    >
+      <button class="chip" data-direction="TOP">TOP</button
+      ><button class="chip" data-direction="RIGHT">RIGHT</button
+      ><button class="chip" data-direction="BOTTOM">BOTTOM</button
+      ><button class="chip" data-direction="LEFT">LEFT</button>
+      <button class="chip" id="qa-active">SWEEP</button
+      ><button class="chip" id="qa-results">RESULTS</button
+      ><button class="chip" id="qa-language">RU / EN</button>
+    </nav>
+    <main id="app" style="padding-top: 56px">
+      <header hidden><span id="header-note"></span></header>
+      <section id="stage" style="height: calc(100dvh - 60px); min-height: 0">
+        <div id="game"></div>
+        <div id="hud" hidden></div>
+        <div id="ability-status"></div>
+        <div id="overlay"></div>
+        <button id="pause-button" hidden></button
+        ><button id="dash-button" class="ability-button" hidden></button
+        ><button id="wave-button" class="ability-button" hidden></button>
+        <div id="joystick" role="group"><span></span></div>
+        <div id="pause" hidden></div>
+      </section>
+      <footer hidden><span id="motto"></span><span id="edition"></span></footer>
+    </main>
+    <div id="rotate" hidden></div>
+    <div id="toast" hidden></div>
+    <script type="module" src="./visual.js"></script>
+  </body>
+</html>

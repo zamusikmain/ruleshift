@@ -127,7 +127,7 @@ test("ten rules, explicit compatibility and no early Chaos", () => {
   const late = new RuleEngine(random);
   late.update(
     3,
-    70,
+    100,
     [],
     () => {},
     () => {},
@@ -299,8 +299,10 @@ test("simultaneous elimination is a draw; reconnect requires secret and has grac
   assert.equal(JSON.stringify(expired.snapshot()).includes("token1"), false);
   const bothLost = roomWithPlayers();
   bothLost.command("p0", { type: "start" });
-  for (let i = 0; i < 61; i++) bothLost.tick(.05);
-  bothLost.disconnect("p0"); bothLost.disconnect("p1");
-  bothLost.tick(RECONNECT_GRACE + .1);
-  assert.equal(bothLost.phase, "results"); assert.equal(bothLost.winnerId, null);
+  for (let i = 0; i < 61; i++) bothLost.tick(0.05);
+  bothLost.disconnect("p0");
+  bothLost.disconnect("p1");
+  bothLost.tick(RECONNECT_GRACE + 0.1);
+  assert.equal(bothLost.phase, "results");
+  assert.equal(bothLost.winnerId, null);
 });

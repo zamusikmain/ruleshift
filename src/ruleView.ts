@@ -1,17 +1,23 @@
 import Phaser from "phaser";
 import { ARENA, C, center } from "./config";
 import {
-  laserY,
+  laserFrame,
+  meteorWarning,
+  RULE_DEFS,
   shrinkInset,
   symbolPosition,
   type RuleSnapshot,
 } from "./shared/ruleEngine";
+import { MODIFIER_NAMES } from "./shared/variants";
+import { directionVector } from "./shared/direction";
 import { t } from "./locales";
 export const SYMBOLS = ["I", "II", "III"];
 export function ruleStatus(s: RuleSnapshot): string {
   if (s.phase === "rest")
     return `${t("next")} · ${Math.max(0, s.remaining).toFixed(1)}`;
   if (s.phase === "announce") return t("prepare");
+  if (s.event)
+    return `${t("overload")} · ${Math.max(0, s.remaining).toFixed(1)}`;
   if (s.ids.includes(4))
     return s.elapsed < 1.8
       ? `${t("stopIn")} ${(1.8 - s.elapsed).toFixed(1)}`
@@ -23,6 +29,23 @@ export function ruleStatus(s: RuleSnapshot): string {
   if (s.ids.includes(2))
     return `${t("center")} · ${Math.max(0, 4 - s.tier * 0.25 - s.elapsed).toFixed(1)}`;
   return `${t(s.elapsed < 1.5 ? "warning" : s.ids.includes(0) ? "moving" : "active")} · ${Math.max(0, s.remaining).toFixed(1)}`;
+}
+export function ruleTitle(s: RuleSnapshot): string {
+  return s.ids
+    .map(
+      (id) =>
+        t(RULE_DEFS[id].name) +
+        (s.modifiers?.[id] ? " · " + t(MODIFIER_NAMES[s.modifiers[id]!]) : ""),
+    )
+    .join(" + ");
+}
+export function ruleSubtitle(s: RuleSnapshot): string {
+  const kind = s.event
+    ? t("overloadHint")
+    : s.ids.length > 1
+      ? t("combo")
+      : t(RULE_DEFS[s.ids[0]].description, { symbol: SYMBOLS[s.symbol] });
+  return kind + (s.ids.includes(5) ? " · " + t(`direction${s.direction}`) : "");
 }
 export class RuleView {
   private graphics: Phaser.GameObjects.Graphics;
@@ -44,11 +67,49 @@ export class RuleView {
   draw(s: RuleSnapshot): void {
     const g = this.graphics.clear();
     this.symbols.forEach((text) => text.setVisible(false));
+    if (s.phase === "rest") return;
+    if (s.ids.includes(5)) {
+      const beam = laserFrame(s);
+      if (beam.active || beam.warning) {
+        g.lineStyle(
+          beam.active ? 8 : 3,
+          C.danger,
+          beam.active ? 1 : 0.65,
+        ).lineBetween(beam.x1, beam.y1, beam.x2, beam.y2);
+        if (beam.warning) {
+          const v = directionVector(beam.direction);
+          for (const p of [0.2, 0.5, 0.8]) {
+            const x = beam.x1 + (beam.x2 - beam.x1) * p,
+              y = beam.y1 + (beam.y2 - beam.y1) * p;
+            g.lineStyle(3, C.danger).lineBetween(
+              x,
+              y,
+              x + v.x * 24,
+              y + v.y * 24,
+            );
+            g.lineBetween(
+              x + v.x * 24,
+              y + v.y * 24,
+              x + v.x * 14 + v.y * 8,
+              y + v.y * 14 - v.x * 8,
+            );
+            g.lineBetween(
+              x + v.x * 24,
+              y + v.y * 24,
+              x + v.x * 14 - v.y * 8,
+              y + v.y * 14 + v.x * 8,
+            );
+          }
+        }
+      }
+    }
     if (s.phase !== "active") return;
     for (const h of s.hazards) {
       const active =
         h.kind === "shot" ||
-        (h.kind === "meteor" ? s.elapsed - h.born >= 1.25 : s.elapsed >= 1.5);
+        (h.kind === "meteor"
+          ? s.elapsed - h.born >= meteorWarning(s)
+          : s.elapsed >= 1.5);
       if (h.kind === "zone" && s.elapsed >= s.duration - 0.3) continue;
       g.fillStyle(C.danger, active ? 0.23 : 0.07).fillCircle(
         h.x,
@@ -88,12 +149,6 @@ export class RuleView {
         )
         .strokePath();
     }
-    if (s.ids.includes(5) && s.elapsed < s.duration - 0.3)
-      g.lineStyle(
-        s.elapsed < 1.5 ? 2 : 8,
-        C.danger,
-        s.elapsed < 1.5 ? 0.4 : 1,
-      ).lineBetween(ARENA.left + 105, laserY(s), ARENA.right - 105, laserY(s));
     if (s.ids.includes(6)) {
       const inset = shrinkInset(s);
       g.fillStyle(C.danger, 0.15)

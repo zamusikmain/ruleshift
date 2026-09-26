@@ -1,6 +1,15 @@
 import { profile, persistProfile } from "./profile";
 type Cue =
-  "click" | "warning" | "success" | "damage" | "achievement" | "victory";
+  | "dash"
+  | "pickup"
+  | "near"
+  | "wave"
+  | "click"
+  | "warning"
+  | "success"
+  | "damage"
+  | "achievement"
+  | "victory";
 class AudioSystem {
   private context?: AudioContext;
   unlock(): void {
@@ -27,6 +36,10 @@ class AudioSystem {
       oscillator = context.createOscillator(),
       gain = context.createGain();
     const pitch = {
+      dash: 510,
+      pickup: 850,
+      near: 610,
+      wave: 160,
       click: 420,
       warning: 260,
       success: 720,

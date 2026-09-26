@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { createRoomCode, validRoomCode } from "../src/shared/identity";
-import { parseClientMessage, type ServerMessage } from "../src/shared/protocol";
+import { parseClientMessage, PROTOCOL_VERSION, type ServerMessage } from "../src/shared/protocol";
 import { Room, ROOM_IDLE_SECONDS } from "../src/shared/room";
 interface Env {
   ROOMS: DurableObjectNamespace<GameRoom>;
@@ -137,6 +137,12 @@ export class GameRoom extends DurableObject<Env> {
     }
     session.lastSeen = now;
     if (message.type === "hello") {
+      if (message.protocol !== PROTOCOL_VERSION) {
+        this.send(socket, { type: "error", code: message.protocol === undefined ? "matchReset" : "versionMismatch" });
+        socket.close(1008, "versionMismatch");
+        this.close(socket);
+        return;
+      }
       if (session.joined) {
         socket.close(1008, "invalidMessage");
         this.close(socket);
@@ -173,7 +179,8 @@ export class GameRoom extends DurableObject<Env> {
         socket.close(1000, "leave");
         this.close(socket);
       }
-      if (message.type !== "input") this.broadcast();
+      if (!["input", "dash", "shockwave"].includes(message.type))
+        this.broadcast();
     }
   }
   private close(socket: WebSocket): void {
