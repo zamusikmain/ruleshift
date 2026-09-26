@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.worker.json",
+  "include": [
+    "mcp",
+    "worker/observability.ts",
+    "src/shared",
+    "src/config.ts",
+    "src/locales/en.ts"
+  ]
+}

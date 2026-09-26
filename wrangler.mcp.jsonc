@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ruleshift-mcp",
+  "main": "mcp/index.ts",
+  "compatibility_date": "2026-09-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "services": [
+    {
+      "binding": "GAME",
+      "service": "ruleshift",
+      "entrypoint": "GameInspection",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "CONTROL", "class_name": "McpControl" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["McpControl"] }],
+  "vars": { "MCP_WRITES_ENABLED": "false", "MCP_ALLOWED_ORIGINS": "[]" },
+}

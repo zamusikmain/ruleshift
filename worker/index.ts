@@ -1,6 +1,11 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { gameConfig, inspectRoom } from "./observability";
 import { createRoomCode, validRoomCode } from "../src/shared/identity";
-import { parseClientMessage, PROTOCOL_VERSION, type ServerMessage } from "../src/shared/protocol";
+import {
+  parseClientMessage,
+  PROTOCOL_VERSION,
+  type ServerMessage,
+} from "../src/shared/protocol";
 import { Room, ROOM_IDLE_SECONDS } from "../src/shared/room";
 interface Env {
   ROOMS: DurableObjectNamespace<GameRoom>;
@@ -45,6 +50,25 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+// Only a same-account Service Binding can reach these RPC methods.
+// The default public fetch handler above does not route to this entrypoint.
+export class GameInspection extends WorkerEntrypoint<Env> {
+  async getStatus() {
+    return {
+      service: "RULESHIFT",
+      protocolVersion: PROTOCOL_VERSION,
+      globalMatchIndex: false as const,
+    };
+  }
+  async getConfig() {
+    return gameConfig();
+  }
+  async inspect(code: string) {
+    if (!validRoomCode(code)) throw new Error("invalid_room_code");
+    return this.env.ROOMS.get(this.env.ROOMS.idFromName(code)).inspect();
+  }
+}
+
 interface Session {
   id?: string;
   joined: boolean;
@@ -65,6 +89,9 @@ export class GameRoom extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => {
       this.existed = !!(await ctx.storage.get("exists"));
     });
+  }
+  async inspect() {
+    return inspectRoom(this.room, this.existed);
   }
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -138,7 +165,11 @@ export class GameRoom extends DurableObject<Env> {
     session.lastSeen = now;
     if (message.type === "hello") {
       if (message.protocol !== PROTOCOL_VERSION) {
-        this.send(socket, { type: "error", code: message.protocol === undefined ? "matchReset" : "versionMismatch" });
+        this.send(socket, {
+          type: "error",
+          code:
+            message.protocol === undefined ? "matchReset" : "versionMismatch",
+        });
         socket.close(1008, "versionMismatch");
         this.close(socket);
         return;

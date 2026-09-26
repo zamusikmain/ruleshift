@@ -42,7 +42,11 @@ class TestResponse {
 }
 function setup() {
   const rooms = new Map();
-  const { default: worker, GameRoom } = loadModule(
+  const {
+    default: worker,
+    GameRoom,
+    GameInspection,
+  } = loadModule(
     "../worker/index",
     {
       Request,
@@ -55,6 +59,12 @@ function setup() {
     },
     {
       "cloudflare:workers": {
+        WorkerEntrypoint: class {
+          constructor(ctx, env) {
+            this.ctx = ctx;
+            this.env = env;
+          }
+        },
         DurableObject: class {
           constructor(ctx, env) {
             this.ctx = ctx;
@@ -87,6 +97,10 @@ function setup() {
           const object = new GameRoom(ctx, env);
           rooms.set(name, {
             object,
+            inspect: async () => {
+              await ready;
+              return object.inspect();
+            },
             fetch: async (request) => {
               await ready;
               return object.fetch(request);
@@ -99,7 +113,7 @@ function setup() {
   };
   const fetch = (path, init) =>
     worker.fetch(new Request(`http://localhost${path}`, init), env);
-  return { rooms, fetch };
+  return { rooms, fetch, inspection: new GameInspection({}, env) };
 }
 test("Worker routes assets, validates Origin/codes, creates room and upgrades sockets", async () => {
   const h = setup();
@@ -162,4 +176,28 @@ test("Worker socket rate and handshake limits reject abuse", async () => {
     socket.messages.some((m) => m.code === "rateLimit"),
     true,
   );
+});
+
+test("private inspection entrypoint reads existing rooms without exposing an HTTP admin route or changing state", async () => {
+  const h = setup();
+  assert.equal((await h.inspection.getStatus()).service, "RULESHIFT");
+  assert.equal((await h.inspection.getConfig()).mutableThroughMcp, false);
+  await assert.rejects(
+    h.inspection.inspect("../../storage"),
+    /invalid_room_code/,
+  );
+  assert.equal((await h.inspection.inspect("ZZZ234")).reason, "not_found");
+  const { code } = await (
+    await h.fetch("/api/rooms", { method: "POST" })
+  ).json();
+  const room = h.rooms.get(code).object.room;
+  room.join("private-id", "private-token", "PrivatePlayer", 0);
+  const before = JSON.stringify(room.snapshot());
+  const details = await h.inspection.inspect(code);
+  assert.equal(details.players.total, 1);
+  assert.equal(details.phase, "lobby");
+  assert.ok(!JSON.stringify(details).includes("private"));
+  assert.equal(JSON.stringify(room.snapshot()), before);
+  assert.equal((await h.fetch(`/api/rooms/${code}/inspect`)).status, 404);
+  assert.equal((await h.fetch("/api/admin")).status, 404);
 });

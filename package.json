@@ -6,14 +6,18 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "npm run typecheck && vite build",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json && tsc -p tsconfig.mcp.json",
+    "dev:mcp": "wrangler dev --config wrangler.mcp.jsonc --ip 127.0.0.1 --port 8788",
+    "check:mcp": "wrangler deploy --config wrangler.mcp.jsonc --dry-run",
     "dev:online": "wrangler dev --ip 127.0.0.1 --port 8787",
     "test": "node --test tests/*.test.mjs",
     "test:online": "node tests/online.smoke.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "phaser": "^3.90.0"
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "phaser": "^3.90.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260926.1",

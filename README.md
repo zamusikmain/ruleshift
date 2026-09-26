@@ -23,18 +23,18 @@ This is the existing production URL. The v1.0 changes in this working tree have 
 
 The original arena, movement feel, health model, and five rules are retained. Rules now have a renderer-independent simulation shared with Online.
 
-| Rule | What to do |
-| --- | --- |
-| Keep Moving | Do not stand still for 1.2 seconds. Pushing against a wall does not count. |
-| Danger Zones | Leave the marked circles before the 1.5-second warning ends. |
-| Center Now | Reach the center circle within 4 seconds, reducing to 3.5 on Hard. |
-| Dodge | Avoid projectiles aimed at a player's position when they spawn. |
-| Don't Move | Prepare for 1.8 seconds, freeze for 2 seconds, then wait for release. |
-| Laser Sweep | Avoid a descending beam; use the gaps at its ends. |
-| Shrinking Arena | Stay inside the gradually contracting safe border. |
-| Hunter | Keep away from a slower pursuer after its warning. |
-| Meteor Shower | Leave targeted circles before impact, 1.25 seconds after marking. |
-| Symbol Match | Reach the requested I / II / III zone. Symbols supplement color. |
+| Rule            | What to do                                                                 |
+| --------------- | -------------------------------------------------------------------------- |
+| Keep Moving     | Do not stand still for 1.2 seconds. Pushing against a wall does not count. |
+| Danger Zones    | Leave the marked circles before the 1.5-second warning ends.               |
+| Center Now      | Reach the center circle within 4 seconds, reducing to 3.5 on Hard.         |
+| Dodge           | Avoid projectiles aimed at a player's position when they spawn.            |
+| Don't Move      | Prepare for 1.8 seconds, freeze for 2 seconds, then wait for release.      |
+| Laser Sweep     | Avoid a descending beam; use the gaps at its ends.                         |
+| Shrinking Arena | Stay inside the gradually contracting safe border.                         |
+| Hunter          | Keep away from a slower pursuer after its warning.                         |
+| Meteor Shower   | Leave targeted circles before impact, 1.25 seconds after marking.          |
+| Symbol Match    | Reach the requested I / II / III zone. Symbols supplement color.           |
 
 Each cycle has a 1.5-second announcement, 4–6 active seconds, and a 2.5-second recovery. Hazards are cleared between rules. Chaos uses an explicit allowlist: Keep Moving + Meteor Shower, Keep Moving + Hunter, or Dodge + Shrinking Arena.
 
@@ -60,20 +60,40 @@ The touch joystick supports 360-degree analog movement, a 16% dead zone, pointer
 
 Desktop browser layouts were inspected at 844 × 390 and 1024 × 768. These are viewport checks, **not** physical Android/iPhone/iPad certification. See [manual QA](docs/QA.md) for the remaining device tests.
 
+## AI Agent / MCP Integration
+
+RULESHIFT includes a separate **Remote MCP Server** using the official Model Context Protocol SDK and stateless Streamable HTTP. It inspects the live game's redacted authoritative state through a private Cloudflare Service Binding. It does not change Solo, gameplay rules, the public game URL or the multiplayer WebSocket protocol.
+
+```text
+AI agent / MCP client --HTTPS + bearer token--> ruleshift-mcp Worker
+                                                |             |
+                                   private Service Binding    McpControl DO
+                                                |             monitoring + audit
+                              ruleshift / GameInspection --> GameRoom
+```
+
+Read tools: `get_game_status`, `get_active_matches`, `get_match_details`, `get_game_config`, `get_server_stats`, `get_recent_events`. Lists/statistics cover only explicitly monitored rooms; recent events are the bounded MCP audit, not invented gameplay history. The existing backend has no global match registry or lifetime metrics.
+
+Write tools: `watch_room` and `unwatch_room`, protected by operator credentials, a disabled-by-default write flag, strict validation, revision checks and atomic audit logging. They manage monitoring without modifying a match. Human confirmation is a responsibility of the MCP client/agent before calling a write tool.
+
+Deploy the game backend update first, then deploy `wrangler.mcp.jsonc` separately after provisioning its `MCP_KEYS` secret. Planned endpoint: `https://ruleshift-mcp.zamusik-play.workers.dev/mcp` (not published by this implementation). Connect using Streamable HTTP with a provisioned bearer Authorization header. OAuth-only clients are not supported by this initial authentication model.
+
+See [MCP architecture, security, client examples and deployment instructions](docs/MCP.md). A read-only SDK example is available at `scripts/mcp-client.mjs`; set `RULESHIFT_MCP_URL` and `RULESHIFT_MCP_TOKEN` through your local secret manager before running it. `npm test` includes protocol tests with the real SDK; `npm run check:mcp` performs an unpublished Cloudflare bundling dry run.
+
 ## Localization
 
 Typed English and Russian dictionaries live in `src/locales/`. The first launch uses Russian for a Russian browser locale and English otherwise. A manual selection is stored separately and takes precedence on future visits. Menu language changes apply immediately. System Arial/sans-serif fonts support Latin and Cyrillic.
 
 ## Controls
 
-| Action | Control |
-| --- | --- |
-| Move | WASD, arrow keys, or touch joystick |
-| Stop on touch | Release the joystick |
-| Pause / resume Solo | Escape or the pause button |
-| End Solo | Pause → End Run |
-| Leave Online | The × button or Leave Room |
-| Language / sound | Menu or Profile settings |
+| Action              | Control                             |
+| ------------------- | ----------------------------------- |
+| Move                | WASD, arrow keys, or touch joystick |
+| Stop on touch       | Release the joystick                |
+| Pause / resume Solo | Escape or the pause button          |
+| End Solo            | Pause → End Run                     |
+| Leave Online        | The × button or Leave Room          |
+| Language / sound    | Menu or Profile settings            |
 
 Sound is synthesized with Web Audio and starts only after user interaction. Muting is saved locally. Audio failure does not prevent play.
 
