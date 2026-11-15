@@ -1,16 +1,16 @@
 import Phaser from "phaser";
+import { audio } from "./audio";
 import { RuleEngine, RULE_DEFS } from "./shared/ruleEngine";
 import { RuleView, ruleStatus, ruleTitle, ruleSubtitle } from "./ruleView";
 import { t } from "./locales";
 import type { Player } from "./player";
+import type { OfflineMode } from "./shared/modes";
+import type { RandomSource } from "./shared/ruleEngine";
 export const RULES = RULE_DEFS;
 export class RuleSystem {
-  readonly engine = new RuleEngine({
-    pick: (values) => Phaser.Utils.Array.GetRandom(values),
-    between: (min, max) => Phaser.Math.Between(min, max),
-    shuffle: (values) => Phaser.Utils.Array.Shuffle(values),
-  });
+  readonly engine: RuleEngine;
   private view: RuleView;
+  private intensity=0;
   constructor(
     scene: Phaser.Scene,
     private player: Player,
@@ -19,7 +19,14 @@ export class RuleSystem {
     private reward: (count: number) => void,
     private fail: () => void = () => {},
     private near: () => void = () => {},
+    private mode: OfflineMode = "classic",
+    random?: RandomSource,
   ) {
+    this.engine = new RuleEngine(random??{
+      pick: (values) => Phaser.Utils.Array.GetRandom(values),
+      between: (min, max) => Phaser.Math.Between(min, max),
+      shuffle: (values) => Phaser.Utils.Array.Shuffle(values),
+    }, mode);
     this.view = new RuleView(scene);
   }
   get phase() {
@@ -48,6 +55,7 @@ export class RuleSystem {
       survival,
       [
         {
+          ...this.player.state,
           id: "solo",
           x: this.player.x,
           y: this.player.y,
@@ -60,10 +68,13 @@ export class RuleSystem {
       this.hit,
       (_, count) => this.reward(count),
       this.fail,
-      this.near,
+      () => { if (this.mode === "daily" || this.player.intentionallyMoving) this.near(); },
     );
     const s = this.engine.state;
-    if (s.serial !== serial)
+    const entered=(s.intensity??0)>0&&this.intensity!==s.intensity;
+    this.intensity=s.intensity??0;
+    if(entered) { audio.play("overdrive"); this.announce(`${t('overdrivePhase')} ${this.intensity}`,t('overdriveHint'),0x65dce9); }
+    else if (s.serial !== serial)
       this.announce(
         s.event ? t("overload") : ruleTitle(s),
         ruleSubtitle(s),

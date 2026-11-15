@@ -6,6 +6,7 @@ test("Results retain their action nodes across snapshots; rematch and leave work
   const nodes = new Map();
   let renders = 0,
     exits = 0,
+    scaleRefreshes = 0,
     active = false;
   const bodyClasses = new Set();
   const document = {
@@ -38,6 +39,7 @@ test("Results retain their action nodes across snapshots; rematch and leave work
     escapeHtml: (s) => s,
     colorHex: () => "#ffffff",
     notifyAchievements() {},
+    notifyProgress() {},
     toast() {},
   };
   const { OnlineClient } = loadModule(
@@ -73,7 +75,7 @@ test("Results retain their action nodes across snapshots; rematch and leave work
     reset() {},
   };
   const client = new OnlineClient(
-    {},
+    { scale: { getParentBounds() {}, refresh: () => scaleRefreshes++ } },
     controls,
     () => exits++,
     () => {},
@@ -100,6 +102,7 @@ test("Results retain their action nodes across snapshots; rematch and leave work
     room.tick(3.1);
     client.receive(room.snapshot());
     assert.equal(active, true);
+    assert.equal(scaleRefreshes, round + 1, "refresh canvas layout once at each match start");
     room.members.get("b").state.hp = 0;
     room.members.get("b").state.eliminatedAt = room.time;
     room.tick(0.05);
@@ -119,6 +122,7 @@ test("Results retain their action nodes across snapshots; rematch and leave work
     client.receive(room.snapshot());
   }
   assert.equal(sent.filter((message) => message.type === "rematch").length, 3);
+  assert.equal(scaleRefreshes, 3, "result snapshots must not repeatedly refresh the canvas");
   callbacks.get("leave")();
   assert.equal(exits, 1);
   assert.equal(active, false);

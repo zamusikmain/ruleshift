@@ -138,11 +138,17 @@ test("Worker routes assets, validates Origin/codes, creates room and upgrades so
     });
     assert.equal(response.status, 101);
     const socket = [...object.sessions.keys()].at(-1);
-    socket.input({ type: "hello", protocol: 2, name, color: 0 });
+    socket.input({ type: "hello", protocol: 8, name, color: 0 });
     return socket;
   };
   const a = await connect("Замир"),
     b = await connect("Player");
+  await h.fetch(`/api/rooms/${code}`, { headers: { Upgrade: "websocket" } });
+  const legacy = [...object.sessions.keys()].at(-1);
+  legacy.input({ type: "hello", protocol: 7, name: "Legacy", color: 0 });
+  assert.equal(legacy.closed, true);
+  assert.equal(legacy.messages.at(-1).code, "versionMismatch");
+  assert.equal(object.room.members.size, 2);
   assert.equal(a.messages[0].type, "welcome");
   assert.equal(b.messages[0].type, "welcome");
   a.input({ type: "ready", ready: true });
@@ -169,13 +175,36 @@ test("Worker socket rate and handshake limits reject abuse", async () => {
   const object = h.rooms.get(code).object;
   await h.fetch(`/api/rooms/${code}`, { headers: { Upgrade: "websocket" } });
   const socket = [...object.sessions.keys()][0];
-  socket.input({ type: "hello", protocol: 2, name: "Tester", color: 0 });
+  socket.input({ type: "hello", protocol: 8, name: "Tester", color: 0 });
   for (let i = 0; i < 71; i++) socket.input({ type: "ping" });
   assert.equal(socket.closed, true);
   assert.equal(
     socket.messages.some((m) => m.code === "rateLimit"),
     true,
   );
+});
+test('public gateway strips spoofed internal account and session headers',async()=>{
+ const h=setup(),{code}=await(await h.fetch('/api/rooms',{method:'POST'})).json();
+ await h.fetch(`/api/rooms/${code}`,{headers:{Upgrade:'websocket','X-Ruleshift-Account':webcrypto.randomUUID(),'X-Ruleshift-Session':'a'.repeat(64),'X-Ruleshift-Name':'Spoofed'}});
+ const object=h.rooms.get(code).object,session=[...object.sessions.values()][0];
+ assert.equal(session.accountId,undefined);assert.equal(session.sessionHash,undefined);assert.equal(session.accountName,undefined);
+});
+test("Worker sends the authoritative forfeiture snapshot before closing a departing player",async()=>{
+  const h=setup(),{code}=await(await h.fetch("/api/rooms",{method:"POST"})).json();
+  const object=h.rooms.get(code).object,sockets=[];
+  for(let i=0;i<3;i++) {
+    await h.fetch(`/api/rooms/${code}`,{headers:{Upgrade:"websocket"}});
+    const socket=[...object.sessions.keys()].at(-1);sockets.push(socket);
+    socket.input({type:"hello",protocol:8,name:`Player${i}`,color:i});
+    socket.input({type:"ready",ready:true});
+  }
+  sockets[0].input({type:"start"});object.room.tick(3.1);object.room.time=30;
+  const departing=sockets[0],id=departing.messages[0].id;
+  departing.input({type:"leave"});
+  assert.equal(departing.closed,true);
+  const ack=departing.messages.at(-1);
+  assert.equal(ack.type,"state");assert.equal(ack.players.find(p=>p.id===id).forfeited,true);
+  assert.equal(JSON.stringify(ack).includes(departing.messages[0].token),false);
 });
 
 test("private inspection entrypoint reads existing rooms without exposing an HTTP admin route or changing state", async () => {
@@ -200,4 +229,23 @@ test("private inspection entrypoint reads existing rooms without exposing an HTT
   assert.equal(JSON.stringify(room.snapshot()), before);
   assert.equal((await h.fetch(`/api/rooms/${code}/inspect`)).status, 404);
   assert.equal((await h.fetch("/api/admin")).status, 404);
+});
+
+test('trusted account reconnect keeps UUID, nickname, room and active body; another account cannot steal it',async()=>{
+ const h=setup(),{code}=await(await h.fetch('/api/rooms',{method:'POST'})).json(),object=h.rooms.get(code).object;
+ const account=webcrypto.randomUUID();
+ const connect=async(id,name,token)=>{
+  await object.fetch(new Request('https://ruleshift.test/api/rooms/'+code,{headers:{Upgrade:'websocket','X-Ruleshift-Account':id,'X-Ruleshift-Name':encodeURIComponent(name),'X-Ruleshift-Session':'test-session'}}));
+  const socket=[...object.sessions.keys()].at(-1);socket.input({type:'hello',protocol:8,name:'Client spoof',color:0,...(token?{token}:{})});return socket;
+ };
+ const a=await connect(account,'Trusted Name'),b=await connect(webcrypto.randomUUID(),'Opponent');
+ a.input({type:'ready',ready:true});b.input({type:'ready',ready:true});a.input({type:'start'});object.room.tick(3.1);
+ const welcome=a.messages.find(m=>m.type==='welcome'),before=object.room.snapshot();
+ a.dispatchEvent(new Event('close'));
+ const stolen=await connect(webcrypto.randomUUID(),'Wrong Account',welcome.token);assert.equal(stolen.closed,true);
+ const restored=await connect(account,'Trusted Name',welcome.token),next=restored.messages.find(m=>m.type==='welcome');
+ assert.equal(next.id,welcome.id);assert.equal(object.principals.get(next.id),account);
+ const after=object.room.snapshot(),old=before.players.find(p=>p.id===next.id),current=after.players.find(p=>p.id===next.id);
+ assert.equal(after.code,before.code);assert.equal(after.matchId,before.matchId);assert.equal(after.phase,'playing');
+ for(const key of ['x','y','hp','score'])assert.equal(current[key],old[key]);assert.equal(current.name,'Trusted Name');assert.equal(current.connected,true);
 });

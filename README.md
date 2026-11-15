@@ -2,11 +2,21 @@
 
 **Rules change. Survive.** A dark neon survival arcade built with TypeScript and Phaser 3. Read the warning, adapt to the next rule, and stay alive. Play Solo or challenge friends in a private Last Alive room.
 
+## RULESHIFT 2.0 development status
+
+The `feature/ruleshift-2-chaos-update` working tree now includes a responsive mode dashboard (five Offline and four Online modes), a four-tab personal profile, and a Leaderboard screen that explicitly reports that the global service is not connected. The redesign was published **only to [staging](https://ruleshift-2-staging.zamusik-play.workers.dev)** on 2026-10-09; production is unchanged. See the [deployment and remote QA record](docs/STAGING_UI_DEPLOYMENT_RU.md). Local XP, 17 achievements and saved personal records remain device-local and are not verified global rankings.
+
+The existing v2.0 work includes eight additional hazards, six approved pairs, two triples, Daily/Survival progression and protocol v6. See [Offline modes](docs/OFFLINE_MODES.md), [player progress](docs/PLAYER_PROGRESS.md), [staging QA](docs/STAGING_QA.md), and the [UI verification report](docs/UI_REDESIGN_QA_RU.md). The [account/ranking architecture proposal](docs/LEADERBOARD_ARCHITECTURE_RU.md) requires approval before backend implementation. No authentication service, D1 rating database or real top-100 is implemented yet.
+
+Local RULESHIFT 2.1 now has eight more hazards, four additional conditional pairs, one additional Chaos triple and server-clock Overdrive windows. The local protocol is v8 because combined snapshots carry multiple threat layers. These changes have **not been deployed**. See the [stage 3 report and remaining QA](docs/OVERDRIVE_STAGE3_RU.md); Daily and device-local progress remain separate from global ratings.
+
+The feature descriptions and limitations below document the earlier v1 release; use the linked v2.0 documents for the current development branch.
+
 ## Live Demo
 
 [Play RULESHIFT](https://ruleshift.zamusik-play.workers.dev)
 
-This is the existing production URL. The v1.0 changes in this working tree have **not been deployed**. Online functionality described below belongs to this version, not necessarily to the currently published demo.
+This is the existing production URL. The v2.0 redesign is not published there. Development and staging remain separate from production.
 
 ## Features
 
@@ -195,6 +205,12 @@ npm run build
 ```
 
 This type-checks both client and Worker code and builds the frontend into `dist/`. Wrangler bundles `worker/index.ts` separately. `npm run preview` previews static assets only; it does not start the room server. Phaser's bundle-size warning is informational; the build succeeds.
+
+## RULESHIFT 2.0 Staging
+
+The `feature/ruleshift-2-chaos-update` branch has an isolated staging configuration: `wrangler.staging.jsonc`, Worker `ruleshift-2-staging`, its own Durable Object namespace and same-origin client API/WebSockets. The first staging deployment is live at [ruleshift-2-staging.zamusik-play.workers.dev](https://ruleshift-2-staging.zamusik-play.workers.dev), with a two-client real HTTP/WebSocket smoke-test passed on 2026-10-09. Full multi-device/mobile QA is still pending. Do not use the normal production deploy command for this QA release.
+
+See [staging build/deploy, rollback and teardown](docs/STAGING.md) and the [real network and mobile QA checklist](docs/STAGING_QA.md). Staging requires no game secrets and does not deploy or bind to the production MCP Worker. The teardown configuration deletes staging data irreversibly and is not a rollback.
 
 ## Cloudflare Deployment
 

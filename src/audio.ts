@@ -1,4 +1,11 @@
 import { profile, persistProfile } from "./profile";
+export let soundVolume = .7;
+try { const saved = localStorage.getItem("ruleshift.volume.v1"); const value = saved === null ? NaN : Number(saved); if (Number.isFinite(value)) soundVolume = Math.max(0, Math.min(1, value)); } catch { /* Optional storage. */ }
+export function setSoundVolume(value: number): void {
+  if (!Number.isFinite(value)) return;
+  soundVolume = Math.max(0, Math.min(1, value));
+  try { localStorage.setItem("ruleshift.volume.v1", String(soundVolume)); } catch { /* Optional storage. */ }
+}
 type Cue =
   | "dash"
   | "pickup"
@@ -9,9 +16,13 @@ type Cue =
   | "success"
   | "damage"
   | "achievement"
-  | "victory";
+  | "victory"
+  | "shieldBreak"
+  | "overdrive"
+  | "defeat";
 class AudioSystem {
   private context?: AudioContext;
+  private voices = 0;
   unlock(): void {
     if (!profile.sound) return;
     try {
@@ -30,7 +41,7 @@ class AudioSystem {
     }
   }
   play(cue: Cue): void {
-    if (!profile.sound || !this.context || this.context.state !== "running")
+    if (!profile.sound || soundVolume === 0 || this.voices >= 12 || !this.context || this.context.state !== "running")
       return;
     const context = this.context,
       oscillator = context.createOscillator(),
@@ -46,6 +57,9 @@ class AudioSystem {
       damage: 110,
       achievement: 980,
       victory: 1100,
+      shieldBreak: 190,
+      overdrive: 330,
+      defeat: 90,
     }[cue];
     oscillator.type = cue === "damage" ? "triangle" : "sine";
     oscillator.frequency.setValueAtTime(pitch, context.currentTime);
@@ -53,12 +67,14 @@ class AudioSystem {
       pitch * 1.35,
       context.currentTime + 0.12,
     );
-    gain.gain.setValueAtTime(0.045, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.045 * soundVolume, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001 * soundVolume, context.currentTime + 0.18);
     oscillator.connect(gain).connect(context.destination);
     oscillator.start();
+    this.voices++;
     oscillator.stop(context.currentTime + 0.2);
     oscillator.onended = () => {
+      this.voices--;
       oscillator.disconnect();
       gain.disconnect();
     };

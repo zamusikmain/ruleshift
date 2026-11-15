@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ruleshift-2-staging",
+  "compatibility_date": "2026-09-26",
+  "main": "worker/staging-retired.ts",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "staging-retire-v2", "deleted_classes": ["GameRoom"] }
+  ]
+}

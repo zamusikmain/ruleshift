@@ -1,0 +1,10 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {loadModule} from './load.mjs';
+test('browser passkey bridge converts binary options/responses, uses cookies and does not store secrets',async()=>{
+ const calls=[],prompts=[],buffer=()=>new Uint8Array([1,2,3]).buffer;
+ const credential={id:'AQID',rawId:buffer(),type:'public-key',getClientExtensionResults:()=>({}),response:{clientDataJSON:buffer(),attestationObject:buffer(),getTransports:()=>['internal']}};
+ const navigator={credentials:{create:async o=>{prompts.push(o);return credential;},get:async o=>{prompts.push(o);return {...credential,response:{clientDataJSON:buffer(),authenticatorData:buffer(),signature:buffer(),userHandle:buffer()}};}}};
+ const fetch=async(path,init)=>{calls.push({path,init});let value={ok:true};if(path.endsWith('/options')||path.endsWith('/recover'))value=path.includes('login')?{challenge:'AQID',rpId:'game.example'}:{challenge:'AQID',rp:{id:'game.example',name:'Game'},user:{id:'AQID',name:'uuid',displayName:'Name'},pubKeyCredParams:[{type:'public-key',alg:-7}]};if(path.includes('register/verify'))value={accountId:'uuid',recoveryCodes:['once']};return {ok:true,json:async()=>value};};
+ const {leaderboardApi,onSessionRevoked}=loadModule('leaderboardApi',{navigator,fetch,atob:s=>Buffer.from(s,'base64').toString('binary'),btoa:s=>Buffer.from(s,'binary').toString('base64')});
+ const result=await leaderboardApi.register('Name');assert.deepEqual([...new Uint8Array(prompts[0].publicKey.challenge)],[1,2,3]);assert.equal(result.recoveryCodes[0],'once');assert.equal(JSON.parse(calls[1].init.body).response.response.attestationObject,'AQID');await leaderboardApi.login();assert.equal(JSON.parse(calls.at(-1).init.body).response.response.signature,'AQID');let revoked=0;const unsubscribe=onSessionRevoked(()=>revoked++);await leaderboardApi.recover('code');await leaderboardApi.logout();assert.equal(revoked,2);unsubscribe();assert.equal(calls.every(c=>c.init.credentials==='same-origin'&&c.init.cache==='no-store'),true);assert.equal(calls.some(c=>JSON.stringify(c.init).includes('Authorization')),false);
+});
+

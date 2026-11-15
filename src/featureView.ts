@@ -4,6 +4,7 @@ import { t } from "./locales";
 import { audio } from "./audio";
 import type { Body } from "./shared/movement";
 import type { Pickup } from "./shared/pickups";
+import { effectsLevel, reducedMotion } from "./effects";
 
 const PICKUP_STYLE = {
   shield: { color: 0x65dce9, icon: "◇" },
@@ -107,6 +108,7 @@ export class FeatureView {
       if (current.pickups > old.pickups || (old.shield && !p.shield))
         this.effects.push({ x: p.x, y: p.y, age: 0, color: 0x65dce9 });
       if (p.id === localId) {
+        if (old.shield && !p.shield) audio.play("shieldBreak");
         if (current.dash > old.dash) audio.play("dash");
         if (current.wave > old.wave) audio.play("wave");
         if (current.pickups > old.pickups) {
@@ -128,12 +130,12 @@ export class FeatureView {
         e.age += dt;
         return e.age < 0.5;
       })
-      .slice(-24);
+      .slice(-(effectsLevel === "low" ? 6 : effectsLevel === "medium" ? 12 : 24));
     for (const e of this.effects)
       g.lineStyle(2, e.color, 1 - e.age * 2).strokeCircle(
         e.x,
         e.y,
-        20 + e.age * 55,
+        reducedMotion() ? 20 : 20 + e.age * 55,
       );
     if (inset > 0) {
       g.fillStyle(0xff647d, 0.16)
@@ -175,7 +177,7 @@ export class FeatureView {
       .setDepth(22);
     this.scene.tweens.add({
       targets: text,
-      y: text.y - 24,
+      y: reducedMotion() ? text.y : text.y - 24,
       alpha: 0,
       delay: 350,
       duration: 450,

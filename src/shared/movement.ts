@@ -129,7 +129,7 @@ export function activateDash(
   return true;
 }
 export function activateShockwave(body: Body, players: Body[]): boolean {
-  if (body.hp <= 0 || !body.shockwave) return false;
+  if (body.hp <= 0 || !body.shockwave || body.waveTime > 0) return false;
   body.shockwave = false;
   body.waveSerial++;
   body.waveTime = 0.5;

@@ -13,6 +13,10 @@ import { Room } from "../src/shared/room";
 import { OnlineClient } from "../src/online/client";
 import { clearMenu, updateChrome } from "../src/ui";
 import { getLocale, setLocale } from "../src/locales";
+import { seededRandom } from "../src/shared/offlineProgress";
+import { setEffects } from "../src/effects";
+import { showHud } from "../src/hud";
+import { createPlayerView } from "../src/playerView";
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -24,6 +28,7 @@ new Phaser.Game({
   input: { touch: false, mouse: false },
   scene: {
     create() {
+      document.querySelector("#qa-controls").style.flexWrap="wrap";
       updateChrome();
       drawArena(this);
       const controls = new UnifiedInput(this),
@@ -121,6 +126,38 @@ new Phaser.Game({
       };
       document.querySelector("#qa-language").onclick = () =>
         setLocale(getLocale() === "ru" ? "en" : "ru");
+      let gallery,animated=false,elapsed=0;
+      const actors=Array.from({length:8},(_,i)=>({...createBody(580+120*Math.cos(i*Math.PI/4),399+80*Math.sin(i*Math.PI/4)),id:`qa${i}`}));
+      actors.forEach((p,i)=>createPlayerView(this,p.x,p.y,i));
+      const renderGallery=()=>{
+        clearMenu();document.body.classList.add("playing");
+        view.draw(gallery.state);showHud(3,0,elapsed,gallery.state,0,8);
+      };
+      const selectGallery=()=>{
+        gallery=new RuleEngine(seededRandom(123),"chaos");
+        gallery.state.ids=document.querySelector("#qa-hazard").value.split(",").map(Number);
+        gallery.state.tier=2;gallery.start(actors);
+        gallery.state.elapsed=.2;elapsed=.2;renderGallery();
+      };
+      document.querySelector("#qa-hazard").onchange=selectGallery;
+      document.querySelector("#qa-warning").onclick=()=>{animated=false;selectGallery();};
+      document.querySelector("#qa-impact").onclick=()=>{if(!gallery)selectGallery();animated=false;gallery.state.elapsed=2.8;gallery.state.remaining=gallery.state.duration-2.8;renderGallery();};
+      document.querySelector("#qa-effects").onchange=()=>setEffects(document.querySelector("#qa-effects").value);
+      document.querySelector("#qa-animate").onclick=()=>{if(!gallery)selectGallery();animated=!animated;};
+      let frames=0,frameTime=0,worst=0,slow=0,renderTime=0;
+      this.events.on(Phaser.Scenes.Events.POST_UPDATE,(_time,delta)=>{
+        frames++;frameTime+=delta;worst=Math.max(worst,delta);if(delta>50)slow++;
+        if(gallery&&animated) {
+          const start=performance.now();elapsed+=Math.min(.05,delta/1000);
+          if(elapsed>=gallery.state.duration)elapsed=.2;
+          gallery.state.elapsed=elapsed;gallery.state.remaining=gallery.state.duration-elapsed;
+          renderGallery();renderTime+=performance.now()-start;
+        }
+        if(frameTime>=2000) {
+          document.querySelector("#qa-metrics").textContent=JSON.stringify({fixture:true,players:8,ids:gallery?.state.ids,fps:+(frames*1000/frameTime).toFixed(1),maxFrameMs:+worst.toFixed(1),framesOver50ms:slow,renderMs:+(renderTime/frames).toFixed(2),heapMB:performance.memory?+(performance.memory.usedJSHeapSize/1048576).toFixed(1):null,objects:this.children.length});
+          frames=0;frameTime=0;worst=0;slow=0;renderTime=0;
+        }
+      });
       draw();
     },
   },

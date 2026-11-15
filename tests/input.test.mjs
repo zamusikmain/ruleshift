@@ -1,6 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadModule } from "./load.mjs";
+test("separate joystick and Dash pointer owners work concurrently and disposal removes listeners",()=>{
+  const base=new EventTarget(),dash=new EventTarget(),wave=new EventTarget();
+  base.querySelector=()=>({style:{}});
+  base.getBoundingClientRect=()=>({left:0,top:0,width:100,height:100});
+  base.setPointerCapture=()=>{};base.releasePointerCapture=()=>{};base.hasPointerCapture=()=>true;
+  const window=new EventTarget(),document=new EventTarget();
+  document.querySelector=id=>({"#joystick":base,"#dash-button":dash,"#wave-button":wave}[id]);
+  document.body={classList:{toggle:()=>{}}};
+  const keys=Object.fromEntries("W A S D UP DOWN LEFT RIGHT".split(" ").map(key=>[key,{isDown:false,reset(){this.isDown=false;}}]));
+  const {UnifiedInput}=loadModule("input",{window,document,AbortController},{phaser:{default:{Scenes:{Events:{SHUTDOWN:"shutdown"}}}}});
+  const input=new UnifiedInput({input:{keyboard:{addKeys:()=>keys}},events:{once:()=>{}}});
+  const pointer=(target,type,pointerId)=>{const event=new Event(type,{cancelable:true});Object.assign(event,{pointerId,clientX:90,clientY:50});target.dispatchEvent(event);};
+  input.setEnabled(true);pointer(base,"pointerdown",1);pointer(dash,"pointerdown",2);
+  assert.ok(input.read().x>0);assert.equal(input.consumeDash(),true);assert.equal(input.consumeDash(),false);
+  pointer(base,"pointercancel",2);assert.ok(input.read().x>0);
+  pointer(base,"pointercancel",1);assert.equal(input.read().x,0);
+  input.destroy();pointer(dash,"pointerdown",2);pointer(base,"pointerdown",1);
+  assert.equal(input.consumeDash(),false);assert.equal(input.read().x,0);
+});
 test("orientation overlay is limited to portrait touch devices", () => {
   let coarse = false,
     portrait = true;
@@ -12,7 +31,7 @@ test("orientation overlay is limited to portrait touch devices", () => {
       matches: query.includes("coarse") ? coarse : portrait,
     }),
     document: {
-      body: { classList: { contains: () => true, toggle: () => {} } },
+      body: { classList: { contains: name => name === "playing", toggle: () => {} } },
       querySelector: () => overlay,
     },
   });

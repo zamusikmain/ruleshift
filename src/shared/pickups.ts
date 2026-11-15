@@ -70,7 +70,7 @@ export class PickupSystem {
   ): void {
     const kinds: PickupKind[] = this.online
       ? ["shield", "speed", "heal", "shockwave"]
-      : ["shield", "speed", "heal", "scoreBoost"];
+      : ["shield", "speed", "heal", "scoreBoost", "shockwave"];
     const allowed = kinds.filter((kind) => healing || kind !== "heal");
     const inset = Math.max(
       arenaInset,

@@ -1,0 +1,9 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {loadModule} from './load.mjs';
+test('profile nickname writes only to the authenticated UUID; failed service is never silently a guest',async()=>{
+ let name='ServerName',enabled=true,logged=true,fail=false;const calls=[];class ApiError extends Error{constructor(status){super();this.status=status;}}
+ const {currentAccount,saveNickname}=loadModule('accountProfile',{}, {'./leaderboardApi':{ApiError,leaderboardApi:{providers:async()=>({accounts:enabled}),me:async()=>{if(fail)throw new ApiError(503);if(!logged)throw new ApiError(401);return {accountId:'stable-uuid',name};},rename:async next=>{calls.push(next);name=next;return {accountId:'stable-uuid',name};}}}});
+ assert.equal((await saveNickname('Renamed')).accountId,'stable-uuid');assert.equal((await currentAccount()).name,'Renamed');assert.deepEqual(calls,['Renamed']);logged=false;assert.equal(await saveNickname('Guest'),null);logged=true;fail=true;await assert.rejects(()=>saveNickname('Wrong'));enabled=false;assert.equal(await currentAccount(),null);assert.deepEqual(calls,['Renamed']);
+});
+test('guest nickname persists with old profile XP, achievements and records intact',()=>{
+ const {loadProfile,persistProfile}=loadModule('profile');let value=null;const storage={getItem:()=>value,setItem:(k,v)=>value=v};const profile=loadProfile(storage);profile.name='Guest_1';profile.progression.xp=123;profile.stats.wins=7;persistProfile(profile,storage);const restored=loadProfile(storage);assert.equal(restored.name,'Guest_1');assert.equal(restored.progression.xp,123);assert.equal(restored.stats.wins,7);restored.name='Guest_2';persistProfile(restored,storage);assert.equal(loadProfile(storage).name,'Guest_2');assert.equal(loadProfile(storage).progression.xp,123);
+});

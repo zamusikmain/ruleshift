@@ -14,6 +14,15 @@ import {
   type Modifier,
   type MeteorPattern,
 } from "./variants";
+import { modeRules, overdrivePhase, type OfflineMode, type OnlineMode } from "./modes";
+import { makeLaserLayout, laserContact, type LaserLayout } from "./laserHazards";
+import { makeBurstLayout, burstContact, type BurstLayout } from "./burstHazards";
+import { makeSwarmTiles, updateSwarm, swarmTilesContact, type SwarmTiles } from "./swarmTiles";
+import { makeCrossfire, crossContact, type Crossfire } from "./crossfire";
+import { makeCollapse, collapseContact, type Collapse } from "./collapse";
+import { SAFE_PAIRS, SAFE_TRIPLES, certifyCombo, comboKey, extendedCombo, jointlySafe } from "./comboSafety";
+import { survivalDifficulty } from "./offlineProgress";
+import { OVERDRIVE_KINDS, makeOverdrive, overdriveContact, updateOverdrive, type Overdrive } from "./overdriveHazards";
 export const RULE_DEFS = [
   { name: "keepMoving", description: "keepMovingDesc", color: C.lime },
   { name: "dangerZones", description: "dangerZonesDesc", color: C.danger },
@@ -25,6 +34,22 @@ export const RULE_DEFS = [
   { name: "hunter", description: "hunterDesc", color: C.danger },
   { name: "meteor", description: "meteorDesc", color: C.danger },
   { name: "colorMatch", description: "colorMatchDesc", color: C.cyan },
+  { name: "laserGrid", description: "laserGridDesc", color: C.danger },
+  { name: "deathSpin", description: "deathSpinDesc", color: C.danger },
+  { name: "meteorMadness", description: "meteorMadnessDesc", color: C.danger },
+  { name: "hazardShockwave", description: "hazardShockwaveDesc", color: C.cyan },
+  { name: "hunterSwarm", description: "hunterSwarmDesc", color: C.danger },
+  { name: "dangerTiles", description: "dangerTilesDesc", color: C.danger },
+  { name: "crossfire", description: "crossfireDesc", color: C.danger },
+  { name: "finalCollapse", description: "finalCollapseDesc", color: C.danger },
+  { name: "chainLightning", description: "chainLightningDesc", color: C.cyan },
+  { name: "gravityPulse", description: "gravityPulseDesc", color: C.cyan },
+  { name: "movingWalls", description: "movingWallsDesc", color: C.danger },
+  { name: "minefield", description: "minefieldDesc", color: C.danger },
+  { name: "orbitalStrike", description: "orbitalStrikeDesc", color: C.danger },
+  { name: "blackHole", description: "blackHoleDesc", color: C.cyan },
+  { name: "bulletStorm", description: "bulletStormDesc", color: C.danger },
+  { name: "arenaSplit", description: "arenaSplitDesc", color: C.danger },
 ] as const satisfies readonly {
   name: TextKey;
   description: TextKey;
@@ -39,7 +64,7 @@ export const COMPATIBLE_PAIRS: readonly (readonly [number, number])[] = [
   [7, 8],
 ];
 export const compatible = (a: number, b: number): boolean =>
-  COMPATIBLE_PAIRS.some(
+  [...COMPATIBLE_PAIRS,...SAFE_PAIRS].some(
     (pair) => pair.includes(a) && pair.includes(b) && a !== b,
   );
 export interface RulePlayer {
@@ -78,6 +103,16 @@ export interface RuleSnapshot {
   meteorPattern: MeteorPattern;
   event: boolean;
   pressure: number;
+  laserLayout?: LaserLayout;
+  burstLayout?: BurstLayout;
+  swarmTiles?: SwarmTiles;
+  crossfire?: Crossfire;
+  collapse?: Collapse;
+  overdrive?: Overdrive;
+  overdriveLayers?: Overdrive[];
+  intensity?: 0|1|2|3;
+  intensityRemaining?: number;
+  comboSafe?: {x:number;y:number}[];
 }
 interface Tracking {
   idle: number;
@@ -86,6 +121,7 @@ interface Tracking {
   failed: boolean;
   near: Set<string>;
   damage: number;
+  laserPrevious?: { x: number; y: number };
 }
 export interface RandomSource {
   pick(values: number[]): number;
@@ -127,7 +163,17 @@ export class RuleEngine {
   private meteorIndex = 0;
   private nextShot = 0.2;
   private nextMeteor = 0.2;
-  constructor(private random: RandomSource = defaultRandom) {}
+  private readonly rules;
+  private recent: number[]=[];
+  private recentCombos: string[]=[];
+  constructor(
+    private random: RandomSource = defaultRandom,
+    private mode: OfflineMode | OnlineMode = "classic",
+  ) {
+    this.rules = modeRules(mode);
+    this.state.remaining = this.rules.rest;
+    this.state.duration = this.rules.duration;
+  }
   update(
     dt: number,
     survival: number,
@@ -137,30 +183,47 @@ export class RuleEngine {
     fail: (id: string) => void = () => {},
     near: (id: string) => void = () => {},
     pressure = 1,
+    arenaInset = 0,
   ): void {
     const s = this.state;
-    s.pressure = pressure;
+    const window=overdrivePhase(this.mode,survival);
+    s.intensity=window.intensity;
+    s.intensityRemaining=window.remaining;
+    s.pressure = pressure*(this.mode==="survival"?survivalDifficulty(survival).pressure:1);
     s.remaining -= dt;
     s.tier = survival >= 60 ? 2 : survival >= 30 ? 1 : 0;
     if (s.phase === "rest") {
       if (s.remaining <= 0) {
         const previous = s.ids;
-        const first = this.random.pick(
-          RULE_DEFS.map((_, i) => i).filter((i) => !previous.includes(i)),
-        );
+        const available=RULE_DEFS.map((_,i)=>i).filter(i=>(this.mode!=="daily"||i===10||i===11)&&!previous.includes(i)&&(i!==17||survival>=(this.mode==="blitz"?45:60)));
+        const fresh=available.filter(i=>!this.recent.includes(i));
+        const pool=fresh.length?fresh:available;
+        const comboPool=pool.filter(id=>SAFE_PAIRS.some(pair=>pair.includes(id)));
+        const first=this.random.pick((this.mode==="chaos"||s.intensity>0)&&comboPool.length&&this.random.between(0,99)<(s.intensity?Math.min(95,75+s.intensity*5):80)?comboPool:pool);
+        this.recent=[...this.recent,first].slice(-4);
         s.ids = [first];
+        s.laserLayout = undefined;
+        s.burstLayout = undefined;
+        s.swarmTiles = undefined;
+        s.crossfire = undefined;
+        s.collapse = undefined;
+        s.overdrive = undefined; s.overdriveLayers=undefined;
+        s.comboSafe = undefined;
         if (
-          survival >= 90 &&
-          this.random.between(0, 99) < Math.min(45, 25 + (survival - 60) / 6)
+          this.mode!=="daily" && (this.rules.chaos || survival >= 30 || s.intensity>0) &&
+          this.random.between(0, 99) < Math.min(95,(this.rules.chaos?80:this.mode==="survival"?survivalDifficulty(survival).comboChance:Math.min(45,20+survival/6))+s.intensity*20)
         ) {
-          const partner = RULE_DEFS.map((_, i) => i).filter(
-            (i) => compatible(first, i) && !previous.includes(i),
-          );
-          if (partner.length) s.ids.push(this.random.pick(partner));
+          const candidates=SAFE_PAIRS.filter(c=>c.includes(first)&&c.every(i=>!previous.includes(i))&&!this.recentCombos.includes(comboKey(c)));
+          if(candidates.length) {const pair=candidates[this.random.pick(candidates.map((_,i)=>i))];s.ids=[first,...pair.filter(i=>i!==first)];}
+          if(this.rules.chaos && survival>=60 && this.random.between(0,99)<30+s.intensity*10) {
+            const triples=SAFE_TRIPLES.filter(c=>s.ids.every(i=>c.includes(i))&&c.every(i=>!previous.includes(i))&&!this.recentCombos.includes(comboKey(c)));
+            if(triples.length) {const triple=triples[this.random.pick(triples.map((_,i)=>i))];s.ids=[first,...triple.filter(i=>i!==first)];}
+          }
         }
         s.event = survival >= this.nextEvent;
         if (s.event) {
-          s.ids = [5, 8];
+          if(!this.recentCombos.includes(comboKey([10,12]))) s.ids = [10, 12];
+          else s.event=false;
           this.nextEvent = survival + EVENT_INTERVAL;
         }
         s.modifiers = {};
@@ -190,18 +253,31 @@ export class RuleEngine {
             : ["targeted", "scattered", "waveRight", "waveLeft", "center"];
         s.meteorPattern = patterns[this.random.between(0, patterns.length - 1)];
         s.phase = "announce";
-        s.remaining = s.ids.length > 1 ? 2 : 1.5;
+        s.remaining =
+          s.ids.length > 1
+            ? Math.max(0.7, this.rules.announce + 0.2)
+            : this.rules.announce;
         s.serial++;
         s.symbol = this.random.between(0, 2);
       }
       return;
     }
     if (s.phase === "announce") {
-      if (s.remaining <= 0) this.start(players);
+      if (s.remaining <= 0) this.start(players, arenaInset);
       return;
     }
     s.elapsed += dt;
     const living = players.filter((p) => p.hp > 0);
+    for(const layer of s.overdriveLayers??(s.overdrive?[s.overdrive]:[])) updateOverdrive(layer,living,s.elapsed);
+    // Mine fuses may change, but the invariant refuge must remain outside the
+    // full swept volume each tick. Fail closed without granting event rewards.
+    if(s.comboSafe&&s.comboSafe.some(q=>!jointlySafe(s,q,Math.max(12,...living.map(p=>p.radius))))) {
+      s.phase='rest';s.remaining=.12;s.ids=[];s.hazards=[];
+      s.laserLayout=undefined;s.burstLayout=undefined;s.swarmTiles=undefined;s.crossfire=undefined;s.collapse=undefined;
+      s.overdrive=undefined;s.overdriveLayers=undefined;s.comboSafe=undefined;s.event=false;
+      return;
+    }
+    if(s.swarmTiles) updateSwarm(s.swarmTiles,living,new Map([...this.tracking].map(([id,t])=>[id,t.laserPrevious!])),s.elapsed,dt);
     this.updateHazards(dt, living);
     for (const player of living) {
       let track = this.tracking.get(player.id);
@@ -222,6 +298,13 @@ export class RuleEngine {
           fail(player.id);
         }
       };
+      if ((s.overdriveLayers??(s.overdrive?[s.overdrive]:[])).some(layer=>overdriveContact(layer,player,s.elapsed,dt,track.laserPrevious))) violation();
+      if (s.laserLayout && s.elapsed < s.duration-0.25 && laserContact(s.laserLayout,player,s.elapsed,dt,track.laserPrevious)) violation();
+      if (s.burstLayout && burstContact(s.burstLayout,player,s.elapsed,dt,track.laserPrevious)) violation();
+      if (s.swarmTiles && swarmTilesContact(s.swarmTiles,player,s.elapsed,dt,track.laserPrevious)) violation();
+      if (s.crossfire && crossContact(s.crossfire,player,s.elapsed,dt,track.laserPrevious)) violation();
+      if (s.collapse && collapseContact(s.collapse,player,s.elapsed,dt,track.laserPrevious)) violation();
+      track.laserPrevious = { x: player.x, y: player.y };
       for (const id of s.ids) {
         if (id === 0) {
           track.idle = player.distance / dt < 12 ? track.idle + dt : 0;
@@ -232,7 +315,7 @@ export class RuleEngine {
         }
         if (
           id === 1 &&
-          s.elapsed >= 1.5 &&
+          s.elapsed >= (s.comboSafe?2:1.5) &&
           s.elapsed < s.duration - 0.3 &&
           s.hazards.some(
             (h) =>
@@ -308,7 +391,7 @@ export class RuleEngine {
       }
       if ((player.damageTaken ?? 0) > track.damage) track.failed = true;
       const close = (key: string, gap: number) => {
-        if (gap < 0 || gap > 18 || track.near.has(key) || player.hp <= 0)
+        if (gap < 0 || gap > 18 || track.near.has(key) || player.hp <= 0 || (this.mode !== "daily" && player.distance / dt < 12))
           return;
         track.near.add(key);
         near(player.id);
@@ -350,14 +433,25 @@ export class RuleEngine {
         if (p.hp > 0 && !this.tracking.get(p.id)?.failed)
           reward(p.id, s.ids.length);
       s.phase = "rest";
-      s.remaining = 2.5 / pressure;
+      const acceleration=this.mode==="survival"?1+survival/45:this.mode==="classic"?1+survival/120:1+survival/240;
+      s.remaining = this.mode==="survival"?survivalDifficulty(survival).rest/pressure:Math.max(.18,this.rules.rest / pressure / acceleration);
+      s.remaining=Math.max(.12,s.remaining/(1+(s.intensity??0)*.5));
       s.hazards = [];
+      s.laserLayout = undefined;
+      s.burstLayout = undefined;
+      s.swarmTiles = undefined;
+      s.crossfire = undefined;
+      s.collapse = undefined;
+        s.overdrive = undefined; s.overdriveLayers=undefined;
+      s.comboSafe = undefined;
     }
   }
-  private start(players: RulePlayer[]): void {
+  private start(players: RulePlayer[], arenaInset = 0): void {
     const s = this.state;
+    s.laserLayout=undefined;s.burstLayout=undefined;s.swarmTiles=undefined;
+    s.crossfire=undefined;s.collapse=undefined;s.overdrive=undefined;s.overdriveLayers=undefined;s.comboSafe=undefined;
     s.phase = "active";
-    s.duration =
+    const baseDuration =
       s.event || s.modifiers[5] === "double"
         ? 10
         : s.ids.includes(5)
@@ -365,9 +459,66 @@ export class RuleEngine {
             ? 7
             : 6
           : 6 - s.tier;
+    s.duration =
+      this.rules.duration < 6 ? Math.min(this.rules.duration, baseDuration) : baseDuration;
+    // Timed objectives must reach their check, including in short Blitz rounds.
+    if (s.ids.includes(2)) s.duration = Math.max(s.duration, 4 - s.tier * 0.25 + 0.25);
+    if (s.ids.includes(4)) s.duration = Math.max(s.duration, 4.05);
+    if (s.ids.includes(9)) s.duration = Math.max(s.duration, 3.95);
+    if(s.ids.includes(16)) s.duration=6.5;
+    if(s.ids.includes(17)) s.duration=5.2;
+    if(s.ids.includes(15)) s.duration=4.5;
+    if(s.ids.some(id=>id>=18)) s.duration=6.8;
+    const extended=extendedCombo(s.ids);
+    if(extended) s.duration=s.ids.length===3?8.4:7.8;
     s.remaining = s.duration;
     s.elapsed = 0;
     s.hazards = [];
+    if(s.ids.some(id=>id>=18)) {
+      const rotation=this.random.between(0,5),layers:Overdrive[]=[];
+      for(const id of s.ids.filter(id=>id>=18)) {
+        const layer=makeOverdrive(OVERDRIVE_KINDS[id-18],players,s.tier,this.mode,arenaInset,rotation);
+        if(!layer) {this.fallback(players,arenaInset);return;}
+        layers.push(layer);
+      }
+      s.overdrive=layers.length===1?layers[0]:undefined;
+      if(layers.length>1) s.overdriveLayers=layers;
+    }
+    if(s.ids.includes(17)) {
+      s.collapse=makeCollapse(players,arenaInset,this.random.between(0,2));
+      if(!s.collapse) {s.phase="rest";s.remaining=.4;s.ids=[];return;}
+    }
+    if(s.ids.includes(16)) {
+      s.crossfire=makeCrossfire(players,s.tier,this.mode,arenaInset,this.random.between(0,3));
+      if(!s.crossfire) {s.phase="rest";s.remaining=.4;s.ids=[];return;}
+    }
+    if (s.ids.includes(14) || s.ids.includes(15)) {
+      s.swarmTiles = makeSwarmTiles(s.ids.includes(14)?"swarm":"tiles",players,s.tier,this.mode,s.duration,arenaInset,this.random);
+      if (!s.swarmTiles) { s.phase="rest";s.remaining=.4;s.ids=[];return; }
+    }
+    if (s.ids.includes(12) || s.ids.includes(13)) {
+      s.burstLayout = makeBurstLayout(s.ids.includes(12)?"madness":"shockwave",players,s.tier,this.mode,s.duration-(s.ids.length>1?(extended?1.45:.65):0),arenaInset,this.random);
+      if (!s.burstLayout) {
+        if(s.ids.length>1) {s.ids=s.ids.filter(id=>id!==12&&id!==13);s.serial++;this.start(players,arenaInset);return;}
+        s.phase="rest";
+        s.remaining=0.4;
+        s.ids=[];
+        return;
+      }
+    }
+    if (s.ids.includes(10) || s.ids.includes(11)) {
+      s.laserLayout = makeLaserLayout(s.ids.includes(10)?"grid":"spin",players,s.tier,this.mode,
+        // Reserve room for continued Sudden Death contraction during the event.
+        arenaInset+s.duration*1.5,
+        this.random.between(0,359)*Math.PI/180);
+      if (!s.laserLayout) {
+        if(s.ids.length>1) {s.ids=s.ids.filter(id=>id!==10&&id!==11);s.serial++;this.start(players,arenaInset);return;}
+        s.phase="rest";
+        s.remaining=0.4;
+        s.ids=[];
+        return;
+      }
+    }
     this.tracking.clear();
     for (const p of players.filter((p) => p.hp > 0))
       this.tracking.set(p.id, {
@@ -377,6 +528,7 @@ export class RuleEngine {
         failed: false,
         near: new Set(),
         damage: p.damageTaken ?? 0,
+        laserPrevious: { x: p.x, y: p.y },
       });
     this.meteorIndex = 0;
     this.nextShot = 0.2;
@@ -427,6 +579,36 @@ export class RuleEngine {
         target: target.id,
       });
     }
+    if(s.ids.length>1) {
+      const warning=extended?2.8:2;
+      if(s.laserLayout) s.laserLayout.warning=warning;
+      if(s.swarmTiles) s.swarmTiles.warning=warning;
+      for(const [index,layer] of (s.overdriveLayers??(s.overdrive?[s.overdrive]:[])).entries()) {
+        const shift=.4+(s.intensity?index*.35:0);
+        layer.warning+=shift;layer.duration+=shift;
+        for(const h of layer.threats){h.warning+=shift;h.active+=shift;h.end+=shift;if(h.armed!==undefined)h.armed+=shift;}
+      }
+      if(s.burstLayout) {
+        s.burstLayout.warning=warning;
+        const shift=extended?1.45:.65;
+        for(const e of s.burstLayout.explosions) {e.born+=shift;e.impact+=shift;}
+        for(const w of s.burstLayout.waves) {w.born+=shift;w.impact+=shift;}
+      }
+      s.comboSafe=certifyCombo(s,players,arenaInset);
+      if(!s.comboSafe) {
+        this.fallback(players,arenaInset);return;
+      }
+      if(s.laserLayout) s.laserLayout.safe=s.comboSafe;
+      if(s.burstLayout) s.burstLayout.safe=s.comboSafe;
+      for(const layer of s.overdriveLayers??(s.overdrive?[s.overdrive]:[])) layer.safe=s.comboSafe;
+      this.recentCombos=[...this.recentCombos,comboKey(s.ids)].slice(-3);
+    }
+  }
+  private fallback(players:RulePlayer[],inset:number):void {
+    if(this.state.ids.length>1) {
+      this.state.ids=[this.state.ids[0]];this.state.event=false;this.state.serial++;
+      this.start(players,inset);
+    } else {this.state.phase='rest';this.state.remaining=.4;this.state.ids=[];}
   }
   private updateHazards(dt: number, players: RulePlayer[]): void {
     const s = this.state;

@@ -266,7 +266,7 @@ test("Perfect requires a complete clean rule, including damage outside rule call
 
 test("Near Miss rewards a passed projectile only once and never rewards a collision", () => {
   const e = new RuleEngine(random),
-    p = { ...createBody(), id: "a" };
+    p = { ...createBody(), id: "a", distance: 1 };
   let near = 0;
   Object.assign(e.state, {
     ids: [3],

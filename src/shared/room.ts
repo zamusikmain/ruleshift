@@ -1,3 +1,5 @@
+import { applyOverdriveMotion } from "./overdriveHazards";
+import { pulseThreats } from "./pulse";
 import {
   createBody,
   moveBody,
@@ -19,6 +21,7 @@ import type {
 import { PickupSystem } from "./pickups";
 import { SUDDEN_DEATH_START, suddenDeathInset } from "./variants";
 import { ARENA } from "../config";
+import { type OnlineMode } from "./modes";
 interface Member {
   state: PlayerSnapshot;
   token: string;
@@ -35,6 +38,7 @@ export class Room {
   phase: RoomSnapshot["phase"] = "lobby";
   hostId = "";
   matchId = 0;
+  mode: OnlineMode = "classic";
   time = 0;
   countdown = 0;
   winnerId: string | null = null;
@@ -43,7 +47,7 @@ export class Room {
   rules: RuleEngine;
   pickups: PickupSystem;
   get suddenDeath(): boolean {
-    return this.time >= SUDDEN_DEATH_START;
+    return this.time >= (this.mode === "lastOneStanding" ? 60 : SUDDEN_DEATH_START);
   }
   get arenaInset(): number {
     return suddenDeathInset(this.time);
@@ -140,10 +144,12 @@ export class Room {
     }
     if (message.type === "shockwave") {
       if (this.phase !== "playing") return false;
-      return activateShockwave(
+      const activated = activateShockwave(
         member.state,
         [...this.members.values()].map((m) => m.state),
       );
+      if (activated) pulseThreats(this.rules.state, member.state);
+      return activated;
     }
     this.lastActivity = this.clock;
     if (message.type === "leave") {
@@ -152,6 +158,10 @@ export class Room {
     }
     if (message.type === "ready" && this.phase === "lobby") {
       member.state.ready = message.ready;
+      return true;
+    }
+    if (message.type === "mode" && this.phase === "lobby" && id === this.hostId) {
+      this.mode = message.mode;
       return true;
     }
     if (
@@ -168,7 +178,7 @@ export class Room {
       this.time = 0;
       this.winnerId = null;
       this.matchId++;
-      this.rules = new RuleEngine(this.random);
+      this.rules = new RuleEngine(this.random, this.mode);
       this.pickups = new PickupSystem(true, this.random);
       let index = 0;
       for (const m of this.members.values()) {
@@ -187,6 +197,8 @@ export class Room {
             perfects: 0,
             nearMisses: 0,
             placement: 0,
+            forfeited: false,
+            eventsSurvived: 0,
           },
         );
         m.scoring = new Scoring();
@@ -225,6 +237,8 @@ export class Room {
   remove(id: string, settle = true): void {
     const m = this.members.get(id);
     if (m && (this.phase === "playing" || this.phase === "countdown")) {
+      m.state.forfeited = true;
+      m.state.score = m.scoring.score(m.state.eliminatedAt ?? this.time);
       m.state.hp = 0;
       m.state.eliminatedAt ??= this.time;
       m.state.connected = false;
@@ -269,6 +283,7 @@ export class Room {
     this.lastActivity = this.clock;
     for (const m of this.members.values())
       if (m.state.hp > 0) {
+        const beforeMovement={x:m.state.x,y:m.state.y};
         if (
           isFrozen(this.rules.state) &&
           Math.hypot(m.input.x, m.input.y) < 0.1
@@ -283,6 +298,7 @@ export class Room {
             : { x: 0, y: 0 },
           dt,
         );
+        applyOverdriveMotion(this.rules.state.overdriveLayers??this.rules.state.overdrive,m.state,this.rules.state.elapsed+dt,dt,beforeMovement);
         m.flawless += dt;
         m.state.flawless = Math.max(m.state.flawless, m.flawless);
       }
@@ -310,6 +326,7 @@ export class Room {
         }
       }
     }
+    const previousPhase=this.rules.state.phase;
     this.rules.update(
       dt,
       this.time,
@@ -330,11 +347,17 @@ export class Room {
         if (this.rules.state.event) scoring.bonus += 300;
       },
       (id) => this.members.get(id)!.scoring.fail(),
-      (id) => this.members.get(id)!.scoring.nearMiss(),
+      (id) => {
+        const m = this.members.get(id)!;
+        if (m.state.connected && this.clock - m.lastInput <= .3 && Math.hypot(m.input.x,m.input.y) >= .25) m.scoring.nearMiss();
+      },
       this.suddenDeath
         ? 1 + Math.min(0.35, (this.time - SUDDEN_DEATH_START) / 180)
         : 1,
+      this.arenaInset,
     );
+    if(previousPhase==="active"&&this.rules.state.phase==="rest"&&this.rules.state.ids.length>0)
+      for(const m of this.members.values()) if(m.state.hp>0) m.state.eventsSurvived=(m.state.eventsSurvived??0)+1;
     for (const m of this.members.values())
       Object.assign(m.state, {
         score: m.scoring.score(m.state.eliminatedAt ?? this.time),
@@ -346,24 +369,54 @@ export class Room {
         nearMisses: m.scoring.nearMisses,
       });
     this.checkWinner();
-    // A finite match prevents abandoned rooms from running indefinitely.
-    if (this.time >= 600 && this.phase === "playing") {
+    // Blitz is a scored race; other modes retain the existing finite safety cap.
+    if (this.time >= (this.mode === "blitz" ? 90 : 600) && this.phase === "playing") {
       this.phase = "results";
-      this.winnerId = null;
+      this.rules.state.hazards = [];
+      this.rules.state.laserLayout = undefined;
+      this.rules.state.burstLayout = undefined;
+      this.rules.state.swarmTiles = undefined;
+      this.rules.state.crossfire = undefined;
+      this.rules.state.collapse = undefined;
+      this.rules.state.overdrive = undefined; this.rules.state.overdriveLayers=undefined; this.rules.state.intensity=0; this.rules.state.intensityRemaining=0;
+      this.rules.state.comboSafe = undefined;
+      if (this.mode === "blitz") {
+        const leaders = [...this.members.values()]
+          .filter((m) => m.state.connected)
+          .sort((a, b) => b.state.score - a.state.score);
+        this.winnerId = leaders.length > 1 && leaders[0].state.score === leaders[1].state.score
+          ? null
+          : (leaders[0]?.state.id ?? null);
+      } else this.winnerId = null;
       this.finalizePlacements();
     }
   }
   private checkWinner(): void {
+    // A scored Blitz continues to its timer even after combat elimination.
+    // Explicit forfeits still allow the last participating player to finish.
+    if (this.mode === "blitz" && [...this.members.values()].filter(m => !m.state.forfeited).length >= 2) return;
     const alive = [...this.members.values()].filter((m) => m.state.hp > 0);
     if (alive.length <= 1) {
       this.phase = "results";
       this.winnerId = alive[0]?.state.id ?? null;
       this.rules.state.hazards = [];
+      this.rules.state.laserLayout = undefined;
+      this.rules.state.burstLayout = undefined;
+      this.rules.state.swarmTiles = undefined;
+      this.rules.state.crossfire = undefined;
+      this.rules.state.collapse = undefined;
+      this.rules.state.overdrive = undefined; this.rules.state.overdriveLayers=undefined; this.rules.state.intensity=0; this.rules.state.intensityRemaining=0;
+      this.rules.state.comboSafe = undefined;
       this.finalizePlacements();
     }
   }
   private finalizePlacements(): void {
     const players = [...this.members.values()].map((m) => m.state);
+    if (this.mode === "blitz") {
+      for (const p of players) p.placement = p.forfeited ? players.length :
+        1 + players.filter(other => !other.forfeited && other.score > p.score).length;
+      return;
+    }
     for (const p of players)
       p.placement =
         1 +
@@ -383,6 +436,7 @@ export class Room {
       phase: this.phase,
       hostId: this.hostId,
       matchId: this.matchId,
+      mode: this.mode,
       players: [...this.members.values()].map((m) => ({ ...m.state })),
       time: this.time,
       countdown: this.countdown,

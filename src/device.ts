@@ -7,6 +7,7 @@ export function isPortraitTouch(): boolean {
 }
 export function updateOrientation(): void {
   document.querySelector<HTMLElement>("#rotate")!.hidden = !(
-    document.body.classList.contains("playing") && isPortraitTouch()
+    document.body.classList.contains("playing") &&
+    !document.body.classList.contains("portrait-offline") && isPortraitTouch()
   );
 }

@@ -1,0 +1,7 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {loadModule} from './load.mjs';
+function entry(storage=new Map(),account=null){let calls=0,failure=false;const api=loadModule('authEntry',{localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)}},{'./accountProfile':{currentAccount:async()=>{calls++;if(failure)throw new Error('offline');return account;}}});return {...api,storage,calls:()=>calls,fail:()=>failure=true};}
+test('first visit requires a choice; guest choice survives reload without storing credentials',async()=>{const first=entry();assert.equal(await first.checkEntry(),false);first.chooseGuest();assert.equal(await first.checkEntry(),true);assert.equal(await entry(first.storage).checkEntry(),true);assert.deepEqual([...first.storage.values()],['guest']);});
+test('registered session skips entry; logout removes guest choice and checks the session again',async()=>{const registered=entry(new Map(),{accountId:'uuid'});assert.equal(await registered.checkEntry(),true);assert.equal(await registered.checkEntry(),true);assert.equal(registered.calls(),1);const guest=entry();guest.chooseGuest();guest.resetEntry();assert.equal(await guest.checkEntry(),false);assert.equal(guest.storage.size,0);});
+test('session failures never silently become an authenticated or guest choice',async()=>{const e=entry();e.fail();await assert.rejects(e.checkEntry());assert.equal(e.storage.size,0);e.chooseGuest();assert.equal(await e.checkEntry(),true);});

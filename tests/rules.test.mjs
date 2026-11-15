@@ -1,6 +1,18 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import assert from "node:assert/strict";
+import { loadModule } from "./load.mjs";
+
+const { modeRules, dailySeed, isOnlineMode } = loadModule("shared/modes");
+
+test("mode rules are distinct, validated and daily seed is stable", () => {
+  assert.equal(isOnlineMode("chaos"), true);
+  assert.equal(isOnlineMode("daily"), false);
+  assert.equal(modeRules("blitz").timeLimit, 90);
+  assert.equal(modeRules("chaos").chaos, true);
+  assert.ok(modeRules("blitz").rest < modeRules("classic").rest);
+  assert.equal(dailySeed(new Date("2026-10-09T12:00:00Z")), dailySeed(new Date("2026-10-09T23:00:00Z")));
+});
 import { test } from "node:test";
 import ts from "typescript";
 import { existsSync } from "node:fs";

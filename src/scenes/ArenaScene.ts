@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { WIDTH, HEIGHT, center } from "../config";
+import { WIDTH, HEIGHT, center, formatTime } from "../config";
 import { Player } from "../player";
 import { RuleSystem } from "../rules";
 import {
@@ -9,6 +9,8 @@ import {
   showResults,
   notifyAchievements,
   updateChrome,
+  showOfflineResults,
+  notifyProgress,
 } from "../ui";
 import { UnifiedInput } from "../input";
 import { profile, persistProfile, unlockAchievements } from "../profile";
@@ -21,7 +23,11 @@ import { isPortraitTouch, updateOrientation } from "../device";
 import { OnlineClient } from "../online/client";
 import { PickupSystem } from "../shared/pickups";
 import { FeatureView, showAbilities } from "../featureView";
+import { pulseThreats } from "../shared/pulse";
 import { isFrozen } from "../shared/ruleEngine";
+import type { OfflineMode, OnlineMode } from "../shared/modes";
+import { dailySpec,DAILY_SECONDS,seededRandom,recordDaily,recordSurvival,offlineFinished } from "../shared/offlineProgress";
+import { recordOffline } from "../shared/progression";
 export class ArenaScene extends Phaser.Scene {
   private pickups = new PickupSystem();
   private features?: FeatureView;
@@ -35,6 +41,11 @@ export class ArenaScene extends Phaser.Scene {
   private controls!: UnifiedInput;
   private online?: OnlineClient;
   private hudClock = 0;
+  private mode: OfflineMode = "classic";
+  private daily?: ReturnType<typeof dailySpec>;
+  private dailyClock=0;
+  private runKey="";
+  private survivedEvents=0;
   constructor() {
     super("Arena");
   }
@@ -53,7 +64,7 @@ export class ArenaScene extends Phaser.Scene {
     };
     const onResize = () => {
       updateOrientation();
-      if (isPortraitTouch()) onBlur();
+      if (this.requiresLandscape()) onBlur();
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && this.running) this.setPaused(!this.paused);
@@ -86,13 +97,14 @@ export class ArenaScene extends Phaser.Scene {
   }
   private mainMenu(): void {
     this.running = false;
+    document.body.classList.remove("portrait-offline");
     this.online?.dispose();
     this.online = undefined;
     this.resetArena();
     document.querySelector<HTMLElement>("#pause-button")!.hidden = true;
     showMenu(
-      () => this.startRound(),
-      () => {
+      (mode: OfflineMode) => this.startRound(mode),
+      (mode: OnlineMode) => {
         clearMenu();
         this.online = new OnlineClient(
           this,
@@ -100,11 +112,16 @@ export class ArenaScene extends Phaser.Scene {
           () => this.mainMenu(),
           (title, subtitle, color) => this.announcement(title, subtitle, color),
         );
-        this.online.showMenu();
+        this.online.showMenu(undefined, mode);
       },
     );
   }
-  private startRound(): void {
+  private startRound(mode: OfflineMode = "classic"): void {
+    this.mode = mode;
+    this.runKey=crypto.randomUUID();
+    this.daily=mode==="daily"?dailySpec():undefined;
+    this.dailyClock=0;
+    this.survivedEvents=0;
     clearMenu();
     this.resetArena();
     this.paused = false;
@@ -120,7 +137,11 @@ export class ArenaScene extends Phaser.Scene {
     notifyAchievements(unlockAchievements(profile));
     persistProfile();
     document.body.classList.add("playing");
+    document.body.classList.toggle("portrait-offline",mode==="survival"||mode==="daily");
     updateOrientation();
+    // The document-scrolling dashboard has a different parent height than the arena.
+    this.scale?.getParentBounds();
+    this.scale?.refresh();
     const pauseButton = document.querySelector<HTMLElement>("#pause-button")!;
     pauseButton.hidden = false;
     pauseButton.textContent = "Ⅱ";
@@ -159,8 +180,13 @@ export class ArenaScene extends Phaser.Scene {
       },
       () => this.scoring.fail(),
       () => this.scoring.nearMiss(),
+      mode,
+      this.daily?seededRandom(this.daily.seed):undefined,
     );
-    if (isPortraitTouch()) this.setPaused(true);
+    if (this.requiresLandscape()) this.setPaused(true);
+  }
+  private requiresLandscape(): boolean {
+    return isPortraitTouch() && this.mode!=="survival" && this.mode!=="daily";
   }
   private setPaused(paused: boolean): void {
     if (!this.running) return;
@@ -171,11 +197,11 @@ export class ArenaScene extends Phaser.Scene {
     if (paused) {
       panel.innerHTML = `<strong>${t("paused")}</strong><button id="resume">${t("resume")}</button><button id="end-run" class="secondary">${t("quit")}</button>`;
       panel.querySelector<HTMLButtonElement>("#resume")!.onclick = () => {
-        if (!isPortraitTouch()) this.setPaused(false);
+        if (!this.requiresLandscape()) this.setPaused(false);
       };
       panel.querySelector<HTMLButtonElement>("#end-run")!.onclick = () => {
         panel.hidden = true;
-        this.finish();
+        this.finish("quit");
       };
     }
   }
@@ -228,7 +254,8 @@ export class ArenaScene extends Phaser.Scene {
     notifyAchievements(unlockAchievements(profile));
     persistProfile();
   }
-  private finish(): void {
+  private finish(reason:"normal"|"quit"="normal"): void {
+    if(!this.running) return;
     this.running = false;
     this.saveProgress();
     hideHud();
@@ -238,11 +265,25 @@ export class ArenaScene extends Phaser.Scene {
     this.add
       .rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x080d15, 0.85)
       .setDepth(50);
+    const result={time:this.survival,score:this.scoring.score(this.survival),events:this.survivedEvents};
+    const notice=recordOffline(profile.progression,this.runKey,this.mode,{...result,perfects:this.scoring.perfects,combos:this.scoring.chaos,damage:this.player?.state.damageTaken??0},reason!=="quit",this.mode==="daily"&&this.survival>=DAILY_SECONDS&&(this.player?.hp??0)>0,this.daily?.date);
+    if(this.mode==="survival"||this.mode==="daily") {
+      const completed=this.mode==="daily"&&this.survival>=DAILY_SECONDS&&(this.player?.hp??0)>0;
+      if(this.mode==="survival") recordSurvival(profile.offline,result);
+      const rewarded=this.daily?recordDaily(profile.offline,this.daily,result,completed):false;
+      persistProfile();
+      notifyProgress(notice,unlockAchievements(profile));
+      persistProfile();
+      showOfflineResults(this.mode,result,this.daily,completed,rewarded,()=>this.startRound(this.mode),()=>this.mainMenu());
+      return;
+    }
+    notifyProgress(notice,unlockAchievements(profile));
+    persistProfile();
     showResults(
       this.scoring.score(this.survival),
       this.survival,
       profile.stats.best,
-      () => this.startRound(),
+      () => this.startRound(this.mode),
       () => this.mainMenu(),
     );
   }
@@ -252,14 +293,25 @@ export class ArenaScene extends Phaser.Scene {
       this.online.update(dt);
       return;
     }
+    if(this.mode==="daily") {
+      if(!this.running||this.paused) return;
+      this.dailyClock+=dt;
+      while(this.dailyClock>=1/60&&this.running&&!this.paused) {this.dailyClock-=1/60;this.step(1/60);}
+    } else this.step(dt);
+  }
+  private step(dt:number):void {
     if (!this.running || this.paused || !this.player || !this.rules) return;
     const previousSecond = Math.floor(this.survival);
-    this.survival += dt;
+    const nextTime=this.survival+dt;
+    // Fixed-step floating-point accumulation must finish on tick 5400, not 5401.
+    this.survival = this.mode==="daily"&&nextTime>=DAILY_SECONDS-1e-7?DAILY_SECONDS:nextTime;
     this.flawless += dt;
-    this.player.update(dt, isFrozen(this.rules.engine.state));
-    this.pickups.update(dt, [this.player.state], this.rules.engine.state);
+    this.player.update(dt, isFrozen(this.rules.engine.state),this.rules.engine.state.overdriveLayers??this.rules.engine.state.overdrive,this.rules.engine.state.elapsed,()=>pulseThreats(this.rules!.engine.state,{...this.player!.state,id:"solo"}));
+    if(this.mode!=="daily") this.pickups.update(dt, [this.player.state], this.rules.engine.state);
     this.scoring.tick(dt, this.player.state.scoreTime > 0);
+    const phase=this.rules.engine.state.phase;
     this.rules.update(dt, this.survival);
+    if(phase==="active"&&this.rules.engine.state.phase==="rest"&&this.rules.engine.state.ids.length>0&&this.player.hp>0) this.survivedEvents++;
     this.features?.draw(
       this.pickups.items,
       [
@@ -283,6 +335,8 @@ export class ArenaScene extends Phaser.Scene {
         this.survival,
         this.rules.engine.state,
         this.scoring.streak,
+        undefined,
+        this.mode==="daily"?`${t("dailyProgress")} ${Math.min(DAILY_SECONDS,Math.floor(this.survival))}/${DAILY_SECONDS}`:this.mode==="survival"?`${t("survival")} · ${t("offlineEvents")} ${this.survivedEvents}`:this.mode==="blitz"?`${t("blitz")} · ${formatTime(Math.max(0,Math.ceil(90-this.survival)))}`:undefined,
       );
     }
     if (
@@ -290,6 +344,6 @@ export class ArenaScene extends Phaser.Scene {
       Math.floor(this.survival) % 5 === 0
     )
       this.saveProgress();
-    if (this.player.hp <= 0) this.finish();
+    if (offlineFinished(this.mode,this.survival,this.player.hp)) this.finish();
   }
 }

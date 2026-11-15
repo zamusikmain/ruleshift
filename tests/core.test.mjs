@@ -103,8 +103,8 @@ test("scoring multiplier is capped, damage resets it, achievements unlock once",
   assert.equal(profiles.unlockAchievements(p).length, 8);
   assert.equal(profiles.unlockAchievements(p).length, 0);
 });
-test("ten rules, explicit compatibility and no early Chaos", () => {
-  assert.equal(RULE_DEFS.length, 10);
+test("twenty-six rules, explicit compatibility and no early Chaos", () => {
+  assert.equal(RULE_DEFS.length, 26);
   assert.equal(compatible(0, 4), false);
   for (const [a, b] of COMPATIBLE_PAIRS) {
     assert.equal(compatible(a, b), true);
@@ -132,8 +132,7 @@ test("ten rules, explicit compatibility and no early Chaos", () => {
     () => {},
     () => {},
   );
-  assert.equal(late.state.ids.length, 2);
-  assert.equal(compatible(...late.state.ids), true);
+  assert.equal(late.state.ids.length, 1,"unsupported legacy pair stays solo");
 });
 test("new rules give warning time and clean up hazards", () => {
   for (let id = 5; id < 10; id++) {
@@ -255,6 +254,25 @@ test("room capacity, unique colors, host transfer and readiness requirements", (
   assert.equal(room.hostId, "p1");
   assert.equal(room.members.size, 7);
 });
+
+test("host synchronizes online mode; Blitz ends at 90 seconds by authoritative score", () => {
+  const room = new Room("ABC234");
+  room.join("host", "11111111-1111-1111-1111-111111111111", "Host", 0);
+  room.join("guest", "22222222-2222-2222-2222-222222222222", "Guest", 1);
+  assert.equal(room.command("guest", { type: "mode", mode: "chaos" }), false);
+  assert.equal(room.command("host", { type: "mode", mode: "blitz" }), true);
+  assert.equal(room.snapshot().mode, "blitz");
+  room.command("host", { type: "ready", ready: true });
+  room.command("guest", { type: "ready", ready: true });
+  room.command("host", { type: "start" });
+  room.tick(3.1);
+  room.members.get("host").scoring.bonus = 50;
+  room.members.get("guest").scoring.bonus = 20;
+  room.time = 89.99;
+  room.tick(0.05);
+  assert.equal(room.phase, "results");
+  assert.equal(room.winnerId, "host");
+});
 test("countdown, authoritative movement, elimination, winner and rematch", () => {
   const room = roomWithPlayers();
   assert.equal(room.command("p0", { type: "start" }), true);
@@ -305,4 +323,18 @@ test("simultaneous elimination is a draw; reconnect requires secret and has grac
   bothLost.tick(RECONNECT_GRACE + 0.1);
   assert.equal(bothLost.phase, "results");
   assert.equal(bothLost.winnerId, null);
+});
+
+test('Online Blitz keeps eliminated competitors until 90 seconds and places by score',()=>{
+ const room=new Room('ABC234',()=>.5);
+ room.join('host','token-host','Host',0);room.join('peer','token-peer','Peer',1);
+ room.command('host',{type:'mode',mode:'blitz'});
+ room.command('host',{type:'ready',ready:true});room.command('peer',{type:'ready',ready:true});room.command('host',{type:'start'});room.tick(3.1);
+ const host=room.members.get('host').state,peer=room.members.get('peer').state;
+ peer.hp=0;peer.eliminatedAt=1;room.tick(.05);assert.equal(room.phase,'playing');
+ host.hp=0;host.eliminatedAt=2;room.tick(.05);assert.equal(room.phase,'playing');
+ room.time=89.99;room.tick(.02);assert.equal(room.phase,'results');
+ const players=room.snapshot().players;
+ for(const p of players)assert.equal(p.placement,1+players.filter(other=>other.score>p.score).length);
+ const best=players.slice().sort((a,b)=>b.score-a.score);assert.equal(room.winnerId,best[0].score===best[1].score?null:best[0].id);
 });

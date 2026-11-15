@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Separate staging D1 created with explicit user authorization. Never use production IDs.
+  "name": "ruleshift-2-staging",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [],
+  "assets": {"directory":"./dist","binding":"ASSETS","run_worker_first":["/api/*"]},
+  "durable_objects": {"bindings":[{"name":"ROOMS","class_name":"GameRoom"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["GameRoom"]}],
+  "d1_databases": [{"binding":"RANKINGS_DB","database_name":"ruleshift-2-staging-rankings","database_id":"2e06c6ff-41ee-42fc-9934-1d1868631956","migrations_dir":"migrations/leaderboard"}],
+  "vars": {"AUTH_ORIGIN":"https://ruleshift-2-staging.zamusik-play.workers.dev","AUTH_RP_ID":"ruleshift-2-staging.zamusik-play.workers.dev"}
+}

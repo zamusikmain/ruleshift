@@ -207,7 +207,7 @@ test("all read tools return real scoped data and no identities, tokens or enviro
   const h = setup();
   const config = await h.call("get_game_config");
   assert.equal(config.result.structuredContent.config.dashCooldownSeconds, 3);
-  assert.equal(config.result.structuredContent.config.rules.length, 10);
+  assert.equal(config.result.structuredContent.config.rules.length, 26);
   assert.equal(
     (await h.call("get_active_matches")).result.structuredContent.matches
       .length,

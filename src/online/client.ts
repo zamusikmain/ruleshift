@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import {onSessionRevoked,rankingsChanged} from '../leaderboardApi';
 import type { UnifiedInput } from "../input";
 import { t, type TextKey } from "../locales";
 import { profile, persistProfile, unlockAchievements } from "../profile";
@@ -9,7 +10,7 @@ import {
   escapeHtml,
   colorHex,
   clearMenu,
-  notifyAchievements,
+  notifyProgress,
   toast,
 } from "../ui";
 import { validRoomCode } from "../shared/identity";
@@ -20,14 +21,19 @@ import type {
   ServerMessage,
 } from "../shared/protocol";
 import { RuleView, ruleTitle, ruleSubtitle } from "../ruleView";
+import { damageEffects } from "../effects";
 import { RULE_DEFS, isFrozen } from "../shared/ruleEngine";
 import { createPlayerView } from "../playerView";
 import { showHud, hideHud } from "../hud";
 import { isPortraitTouch, updateOrientation } from "../device";
 import { audio } from "../audio";
+import { recordOnline,resultFromSnapshot } from "../shared/progression";
 import { formatTime } from "../config";
 import { FeatureView, showAbilities } from "../featureView";
+import type { OnlineMode } from "../shared/modes";
 export class OnlineClient {
+  private rankedResult=0;
+  private unsubscribeSession=onSessionRevoked(()=>{if(!this.socket&&!this.token)return;this.intentional=true;this.socket?.close();clearInterval(this.inputTimer);clearTimeout(this.reconnectTimer);this.token='';this.showMenu('matchReset');});
   private socket?: WebSocket;
   private code = "";
   private id = "";
@@ -42,18 +48,18 @@ export class OnlineClient {
   private lastPing = 0;
   private renderKey = "";
   private serial = -1;
+  private intensity=0;
   private view: RuleView;
   private features: FeatureView;
   private wasSuddenDeath = false;
   private players = new Map<string, Phaser.GameObjects.Container>();
   private priorHp = new Map<string, number>();
   private countedMatch = 0;
-  private finishedMatch = 0;
-  private accountedRules = 0;
-  private accountedChaos = 0;
-  private lastStatsSecond = -1;
+  private leaving = false;
+  private leaveTimeout?: ReturnType<typeof setTimeout>;
   private hudClock = 0;
   private attempt = 0;
+  private selectedMode: OnlineMode = "classic";
   constructor(
     private scene: Phaser.Scene,
     private controls: UnifiedInput,
@@ -63,7 +69,8 @@ export class OnlineClient {
     this.view = new RuleView(scene);
     this.features = new FeatureView(scene);
   }
-  showMenu(error?: TextKey): void {
+  showMenu(error?: TextKey, mode: OnlineMode = this.selectedMode): void {
+    this.selectedMode = mode;
     this.controls.setEnabled(false);
     this.renderKey = "menu";
     this.hidePlayers();
@@ -71,7 +78,7 @@ export class OnlineClient {
     hideHud();
     document.body.classList.remove("playing", "online-match");
     document.querySelector<HTMLElement>("#pause-button")!.hidden = true;
-    const render = () => this.showMenu(error);
+    const render = () => this.showMenu(error, this.selectedMode);
     panel(
       t("online"),
       `<p class="hint">${escapeHtml(profile.name)} · ${t("players")} 2–8</p>${button("create-room", "createRoom")}<p>${t("roomCode")}</p><input id="room-code" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC234" aria-label="${t("roomCode")}"><p id="online-error" class="error" role="alert">${error ? t(error) : ""}</p>${button("join-room", "joinRoom")}${button("back", "back", true)}`,
@@ -144,7 +151,8 @@ export class OnlineClient {
       this.token = "";
       this.id = "";
       this.countedMatch = 0;
-      this.finishedMatch = 0;
+      this.rankedResult = 0;
+      this.leaving = false;
       this.openSocket();
     } catch {
       if (attempt === this.attempt && !this.intentional)
@@ -197,6 +205,7 @@ export class OnlineClient {
         clearTimeout(this.connectTimeout);
         this.id = message.id;
         this.token = message.token;
+        this.send({ type: "mode", mode: this.selectedMode });
         this.reconnectDeadline = 0;
         this.renderKey = "";
         clearInterval(this.inputTimer);
@@ -208,7 +217,7 @@ export class OnlineClient {
         this.socket = undefined;
         socket.close();
         this.hidePlayers();
-        this.showMenu(this.errorKey(message.code));
+        this.showMenu(this.errorKey(message.code), this.selectedMode);
         return;
       }
       if (message.type === "state") this.receive(message);
@@ -220,6 +229,7 @@ export class OnlineClient {
       clearTimeout(this.connectTimeout);
       clearInterval(this.inputTimer);
       this.controls.reset();
+      if(this.leaving){this.finishLeave();return;}
       if (this.intentional || this.socket !== socket) return;
       if (!this.token) {
         this.showMenu("connectionLost");
@@ -268,7 +278,25 @@ export class OnlineClient {
     }
     this.snapshot = state;
     const me = state.players.find((p) => p.id === this.id);
-    if (!me) return;
+    if (!me) {if(this.leaving)this.finishLeave();return;}
+    const result=resultFromSnapshot(state,this.id);
+    if(result) {
+      if(this.rankedResult!==state.matchId){this.rankedResult=state.matchId;rankingsChanged();}
+      const notice=recordOnline(profile.progression,result);
+      if(notice) {
+        profile.stats.onlineGames++;
+        profile.stats.rules+=result.cleanRules;profile.stats.chaos+=result.combos;
+        profile.stats.longest=Math.max(profile.stats.longest,result.time);
+        profile.stats.flawless=Math.max(profile.stats.flawless,me.flawless);
+        profile.stats.streak=Math.max(profile.stats.streak,me.bestStreak);
+        profile.stats.best=Math.max(profile.stats.best,result.score);
+        if(result.outcome==="win"){profile.stats.wins++;audio.play("victory");}
+        else if(result.outcome==="loss") audio.play("defeat");
+        notifyProgress(notice,unlockAchievements(profile));persistProfile();
+      }
+    }
+    // A snapshot already in flight before Leave is not a forfeiture acknowledgement.
+    if(this.leaving){if(result)this.finishLeave();return;}
     this.controls.setEnabled(
       state.phase === "playing" &&
         me.hp > 0 &&
@@ -280,41 +308,11 @@ export class OnlineClient {
       this.countedMatch !== state.matchId
     ) {
       this.countedMatch = state.matchId;
-      this.accountedRules = 0;
-      this.accountedChaos = 0;
       this.serial = -1;
+      this.intensity=0;
       this.priorHp.clear();
       this.features.reset();
       this.wasSuddenDeath = false;
-      profile.stats.onlineGames++;
-      persistProfile();
-    }
-    if (state.phase === "playing" || state.phase === "results") {
-      profile.stats.rules += Math.max(0, me.rules - this.accountedRules);
-      this.accountedRules = me.rules;
-      profile.stats.chaos += Math.max(0, me.chaos - this.accountedChaos);
-      this.accountedChaos = me.chaos;
-      profile.stats.longest = Math.max(
-        profile.stats.longest,
-        me.eliminatedAt ?? state.time,
-      );
-      profile.stats.flawless = Math.max(profile.stats.flawless, me.flawless);
-      profile.stats.streak = Math.max(profile.stats.streak, me.bestStreak);
-      profile.stats.best = Math.max(profile.stats.best, me.score);
-      if (state.phase === "results" && this.finishedMatch !== state.matchId) {
-        this.finishedMatch = state.matchId;
-        if (state.winnerId === this.id) {
-          profile.stats.wins++;
-          audio.play("victory");
-        }
-        notifyAchievements(unlockAchievements(profile));
-        persistProfile();
-      }
-      if (this.lastStatsSecond !== Math.floor(state.time)) {
-        this.lastStatsSecond = Math.floor(state.time);
-        notifyAchievements(unlockAchievements(profile));
-        persistProfile();
-      }
     }
     if (state.phase === "playing") {
       if (this.renderKey !== "playing") {
@@ -322,6 +320,8 @@ export class OnlineClient {
         this.controls.reset();
         document.body.classList.add("playing", "online-match");
         updateOrientation();
+        this.scene.scale?.getParentBounds();
+        this.scene.scale?.refresh();
         const leave =
           document.querySelector<HTMLButtonElement>("#pause-button")!;
         leave.hidden = false;
@@ -329,6 +329,9 @@ export class OnlineClient {
         leave.setAttribute("aria-label", t("leave"));
         this.renderKey = "playing";
       }
+      const entered=(state.rules.intensity??0)>0&&this.intensity!==state.rules.intensity;
+      this.intensity=state.rules.intensity??0;
+      if(entered) { audio.play("overdrive"); this.announce(`${t('overdrivePhase')} ${this.intensity}`,t('overdriveHint'),0x65dce9); }
       if (state.suddenDeath && !this.wasSuddenDeath) {
         this.wasSuddenDeath = true;
         this.announce(t("suddenDeath"), t("suddenDeathHint"), 0xff647d);
@@ -339,7 +342,7 @@ export class OnlineClient {
       ) {
         this.serial = state.rules.serial;
         const ids = state.rules.ids;
-        this.announce(
+        if(!entered) this.announce(
           state.rules.event ? t("overload") : ruleTitle(state.rules),
           ruleSubtitle(state.rules),
           RULE_DEFS[ids[0]].color,
@@ -454,7 +457,7 @@ export class OnlineClient {
       if ((this.priorHp.get(p.id) ?? 3) > p.hp) {
         if (p.id === this.id) {
           audio.play("damage");
-          this.scene.cameras.main.shake(140, 0.003);
+          damageEffects(this.scene);
           if (p.hp === 0) {
             this.controls.setEnabled(false);
             toast(t("spectator"));
@@ -489,11 +492,25 @@ export class OnlineClient {
     }
   }
   leave(): void {
+    if(this.leaving)return;
+    if(this.snapshot?.phase==="playing"&&this.socket?.readyState===WebSocket.OPEN) {
+      this.leaving=true;this.controls.setEnabled(false);clearInterval(this.inputTimer);
+      this.send({type:"leave"});
+      this.leaveTimeout=setTimeout(()=>this.finishLeave(),1500);
+      return;
+    }
     this.send({ type: "leave" });
-    this.dispose();
-    this.exit();
+    this.finishLeave();
+  }
+  private finishLeave():void {
+    this.leaving=false;
+    clearTimeout(this.leaveTimeout);
+    this.dispose();this.exit();
   }
   dispose(): void {
+    this.unsubscribeSession();
+    clearTimeout(this.leaveTimeout);
+    this.leaving=false;
     this.intentional = true;
     this.attempt++;
     clearTimeout(this.reconnectTimer);

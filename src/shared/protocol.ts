@@ -2,7 +2,10 @@ import { validateName, validColor } from "./identity";
 import type { Pickup } from "./pickups";
 import type { Body } from "./movement";
 import type { RuleSnapshot } from "./ruleEngine";
-export const PROTOCOL_VERSION = 2;
+import { isOnlineMode, type OnlineMode } from "./modes";
+// Protocol 8 adds multiple hazard layers and server Overdrive phase metadata. Older renderers
+// cannot safely display these IDs; reject them before joining a room.
+export const PROTOCOL_VERSION = 8;
 export type ErrorCode =
   | "roomNotFound"
   | "roomFull"
@@ -17,8 +20,11 @@ export type ClientMessage =
   | { type: "hello"; name: string; color: number; token?: string; protocol?: number }
   | { type: "input"; x: number; y: number }
   | { type: "ready"; ready: boolean }
+  | { type: "mode"; mode: OnlineMode }
   | { type: "start" | "rematch" | "leave" | "ping" | "dash" | "shockwave" };
 export interface PlayerSnapshot extends Body {
+  forfeited?: boolean;
+  eventsSurvived?: number;
   id: string;
   name: string;
   color: number;
@@ -42,6 +48,7 @@ export interface RoomSnapshot {
   phase: "lobby" | "countdown" | "playing" | "results";
   hostId: string;
   matchId: number;
+  mode: OnlineMode;
   players: PlayerSnapshot[];
   time: number;
   countdown: number;
@@ -101,6 +108,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     return { type: "input", x: m.x, y: m.y };
   if (m.type === "ready" && keys("ready") && typeof m.ready === "boolean")
     return { type: "ready", ready: m.ready };
+  if (m.type === "mode" && keys("mode") && isOnlineMode(m.mode))
+    return { type: "mode", mode: m.mode };
   if (
     (m.type === "start" ||
       m.type === "rematch" ||

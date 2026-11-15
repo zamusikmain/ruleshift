@@ -1,9 +1,12 @@
+import { applyOverdriveMotion, type Overdrive } from "./shared/overdriveHazards";
 import Phaser from "phaser";
+import { damageEffects, effectsLevel, reducedMotion } from "./effects";
 import {
   createBody,
   moveBody,
   damageBody,
   activateDash,
+  activateShockwave,
 } from "./shared/movement";
 import { UnifiedInput } from "./input";
 import { createPlayerView } from "./playerView";
@@ -18,6 +21,10 @@ export class Player {
   }
   get distance() {
     return this.state.distance;
+  }
+  get intentionallyMoving(): boolean {
+    const input = this.input.read();
+    return Math.hypot(input.x,input.y) >= .25;
   }
   get invulnerable() {
     return this.state.invulnerable;
@@ -40,16 +47,18 @@ export class Player {
   get y(): number {
     return this.body.y;
   }
-  update(dt: number, frozen = false): void {
+  update(dt: number, frozen = false, overdrive?: Overdrive|Overdrive[], elapsed=0, onPulse?: () => void): void {
     const x = this.x,
       y = this.y;
     const movement = this.input.read();
     if (this.input.consumeDash()) activateDash(this.state, movement, frozen);
+    if (this.input.consumeWave() && activateShockwave(this.state, [])) onPulse?.();
     if (frozen && Math.hypot(movement.x, movement.y) < 0.1) {
       this.state.vx = this.state.vy = 0;
       this.state.dashTime = 0;
     }
     moveBody(this.state, movement, dt);
+    applyOverdriveMotion(overdrive,this.state,elapsed+dt,dt,{x,y});
     this.body.setPosition(this.state.x, this.state.y);
     this.body.alpha =
       this.invulnerable > 0
@@ -58,7 +67,7 @@ export class Player {
           : 1
         : 1;
     this.trail -= dt;
-    if (this.distance > 0.5 && this.trail <= 0) {
+    if (effectsLevel !== "low" && !reducedMotion() && this.distance > 0.5 && this.trail <= 0) {
       this.trail = 0.055;
       const mote = this.scene.add
         .circle(x, y, 3, PALETTE[profile.color], 0.35)
@@ -74,8 +83,7 @@ export class Player {
   }
   damage(): boolean {
     if (!damageBody(this.state)) return false;
-    this.scene.cameras.main.shake(150, 0.003);
-    this.scene.cameras.main.flash(100, 130, 20, 40);
+    damageEffects(this.scene);
     return true;
   }
 }

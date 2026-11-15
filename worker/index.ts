@@ -7,7 +7,11 @@ import {
   type ServerMessage,
 } from "../src/shared/protocol";
 import { Room, ROOM_IDLE_SECONDS } from "../src/shared/room";
+import {RoomRankings} from './roomRankings';
 interface Env {
+  RANKINGS_DB?: D1Database;
+  AUTH_ORIGIN?: string;
+  AUTH_RP_ID?: string;
   ROOMS: DurableObjectNamespace<GameRoom>;
   ASSETS: Fetcher;
 }
@@ -17,6 +21,10 @@ const createRates = new Map<string, { count: number; at: number }>();
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/auth/') || url.pathname.startsWith('/api/account/') || url.pathname.startsWith('/api/leaderboard')) {
+      const {accountApi}=await import('./accountApi');
+      return accountApi(request,env);
+    }
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     const origin = request.headers.get("Origin");
     if (origin && origin !== url.origin)
@@ -46,7 +54,15 @@ export default {
     const match = /^\/api\/rooms\/([^/]+)$/.exec(url.pathname);
     if (!match || !validRoomCode(match[1]) || request.method !== "GET")
       return json({ error: "roomNotFound" }, 404);
-    return env.ROOMS.get(env.ROOMS.idFromName(match[1])).fetch(request);
+    const forwarded=new Request(request);const headers=forwarded.headers;headers.delete('X-Ruleshift-Account');headers.delete('X-Ruleshift-Session');headers.delete('X-Ruleshift-Name');
+    if(request.headers.get('Upgrade')?.toLowerCase()==='websocket'&&env.RANKINGS_DB&&env.AUTH_ORIGIN&&env.AUTH_RP_ID){
+      if(origin!==env.AUTH_ORIGIN)return json({error:'invalidMessage'},403);
+      const {Accounts,hashSecret}=await import('./accounts'),{cookieToken,SESSION_COOKIE}=await import('./accountApi');
+      const token=cookieToken(request,SESSION_COOKIE);
+      const session=await new Accounts(env.RANKINGS_DB,env.AUTH_ORIGIN,env.AUTH_RP_ID).session(token);
+      if(session&&token){headers.set('X-Ruleshift-Name',encodeURIComponent(session.display_name));headers.set('X-Ruleshift-Account',session.id);headers.set('X-Ruleshift-Session',await hashSecret(token));}
+    }
+    return env.ROOMS.get(env.ROOMS.idFromName(match[1])).fetch(forwarded);
   },
 } satisfies ExportedHandler<Env>;
 
@@ -70,6 +86,9 @@ export class GameInspection extends WorkerEntrypoint<Env> {
 }
 
 interface Session {
+  accountName?:string;
+  accountId?:string;
+  sessionHash?:string;
   id?: string;
   joined: boolean;
   window: number;
@@ -84,10 +103,17 @@ export class GameRoom extends DurableObject<Env> {
   private accumulator = 0;
   private persistClock = 0;
   private existed = false;
+  private principals=new Map<string,string>();
+  private rankings?:RoomRankings;
+  private sessionCheckedAt=0;
+  private queue:Promise<void>=Promise.resolve();
+  private enqueue(action:()=>void|Promise<void>):void {if(!this.rankings){void action();return;}this.queue=this.queue.then(action).catch(()=>{for(const socket of this.sessions.keys())socket.close(1011,'storage unavailable');});this.ctx.waitUntil(this.queue);}
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    if(env.RANKINGS_DB)this.rankings=new RoomRankings(ctx.storage,env.RANKINGS_DB);
     ctx.blockConcurrencyWhile(async () => {
       this.existed = !!(await ctx.storage.get("exists"));
+      await this.rankings?.interrupt();
     });
   }
   async inspect() {
@@ -121,13 +147,16 @@ export class GameRoom extends DurableObject<Env> {
       server = pair[1];
     server.accept();
     this.sessions.set(server, {
+      accountId:request.headers.get('X-Ruleshift-Account')??undefined,
+      accountName:decodeURIComponent(request.headers.get('X-Ruleshift-Name')??'')||undefined,
+      sessionHash:request.headers.get('X-Ruleshift-Session')??undefined,
       joined: false,
       window: Date.now(),
       count: 0,
       lastSeen: Date.now(),
     });
     server.addEventListener("message", (event) =>
-      this.message(server, event.data),
+      this.enqueue(()=>this.message(server, event.data)),
     );
     server.addEventListener("close", () => this.close(server));
     server.addEventListener("error", () => this.close(server));
@@ -141,7 +170,7 @@ export class GameRoom extends DurableObject<Env> {
       this.close(socket);
     }
   }
-  private message(socket: WebSocket, raw: string | ArrayBuffer): void {
+  private async message(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const session = this.sessions.get(socket);
     if (!session || !this.room) return;
     const now = Date.now();
@@ -179,10 +208,13 @@ export class GameRoom extends DurableObject<Env> {
         this.close(socket);
         return;
       }
+      const previous=message.token?[...this.room.members.values()].find(m=>m.token===message.token):undefined;
+      if(previous&&this.principals.get(previous.state.id)!==session.accountId){socket.close(1008,'invalidMessage');this.close(socket);return;}
+      if(previous&&session.accountName)previous.state.name=session.accountName;
       const result = this.room.join(
         crypto.randomUUID(),
         crypto.randomUUID(),
-        message.name,
+        session.accountName??message.name,
         message.color,
         message.token,
       );
@@ -194,6 +226,7 @@ export class GameRoom extends DurableObject<Env> {
       }
       session.joined = true;
       session.id = result.id;
+      if(session.accountId)this.principals.set(result.id,session.accountId);
       this.send(socket, { type: "welcome", ...result });
       this.broadcast();
       return;
@@ -205,8 +238,17 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (message.type === "ping") this.send(socket, { type: "pong" });
     else {
+      if(message.type==='start'&&this.env.RANKINGS_DB){
+        for(const connected of this.sessions.values())if(connected.id&&connected.accountId){
+          const valid=await this.env.RANKINGS_DB.prepare("SELECT account_id FROM sessions WHERE token_hash=? AND account_id=? AND expires_at>?").bind(connected.sessionHash??'',connected.accountId,Math.floor(Date.now()/1000)).first();
+          if(!valid)this.principals.delete(connected.id);
+        }
+      }
       this.room.command(session.id, message);
+      if(this.rankings)await this.rankings.capture(this.room,this.principals);
       if (message.type === "leave") {
+        // Send the authoritative forfeiture before closing the departing socket.
+        this.send(socket, this.room.snapshot());
         socket.close(1000, "leave");
         this.close(socket);
       }
@@ -233,18 +275,33 @@ export class GameRoom extends DurableObject<Env> {
         if (session.joined) this.send(socket, state);
     }
   }
+  private async validateSessions(now:number):Promise<void>{
+    const authenticated=[...this.sessions].filter(([,s])=>s.accountId);
+    if(!this.env.RANKINGS_DB||!authenticated.length)return;
+    const hashes=authenticated.map(([,s])=>s.sessionHash??'');
+    const rows=await this.env.RANKINGS_DB.prepare(`SELECT s.token_hash,s.account_id,a.display_name FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash IN (${hashes.map(()=>'?').join(',')}) AND s.expires_at>? AND a.status='active'`).bind(...hashes,Math.floor(now/1000)).all<{token_hash:string;account_id:string;display_name?:string}>();
+    for(const [,session] of authenticated){const row=rows.results.find(r=>r.token_hash===session.sessionHash&&r.account_id===session.accountId);if(row?.display_name){session.accountName=row.display_name;const member=session.id?this.room?.members.get(session.id):undefined;if(member)member.state.name=row.display_name;}}
+    for(const [socket,session] of authenticated)if(!rows.results.some(r=>r.token_hash===session.sessionHash&&r.account_id===session.accountId)){
+      this.send(socket,{type:'error',code:'matchReset'});socket.close(1008,'session revoked');this.close(socket);
+    }
+  }
   private startTimer(): void {
     if (this.timer) return;
     this.previous = Date.now();
-    this.timer = setInterval(() => {
+    this.timer = setInterval(() => {this.enqueue(async()=>{
       if (!this.room) return;
       const now = Date.now();
+      if(this.env.RANKINGS_DB&&now-this.sessionCheckedAt>=1000){
+        this.sessionCheckedAt=now;
+        await this.validateSessions(now);
+      }
       this.accumulator += Math.min((now - this.previous) / 1000, 0.25);
       this.previous = now;
       while (this.accumulator >= 0.05) {
         this.room.tick(0.05);
         this.accumulator -= 0.05;
       }
+      if(this.rankings)await this.rankings.capture(this.room,this.principals);
       for (const [socket, session] of this.sessions)
         if (now - session.lastSeen > (session.joined ? 15000 : 5000)) {
           socket.close(1001, "timeout");
@@ -264,9 +321,10 @@ export class GameRoom extends DurableObject<Env> {
       )
         this.broadcast();
       if (now - this.persistClock >= 1000) this.persistClock = now;
-    }, 50);
+    });}, 50);
   }
   async alarm(): Promise<void> {
+    if(this.rankings&&!await this.rankings.deliver()){await this.ctx.storage.setAlarm(Date.now()+30000);return;}
     if (!this.room || this.room.expired) await this.expire();
     else await this.ctx.storage.setAlarm(Date.now() + ROOM_IDLE_SECONDS * 1000);
   }
@@ -281,6 +339,8 @@ export class GameRoom extends DurableObject<Env> {
     this.room = undefined;
     this.existed = false;
     await this.ctx.storage.deleteAlarm();
-    await this.ctx.storage.deleteAll();
+    await this.ctx.storage.delete('exists');
+    await this.ctx.storage.delete('ranked-start');
+    if(this.rankings&&!await this.rankings.deliver())await this.ctx.storage.setAlarm(Date.now()+30000);
   }
 }

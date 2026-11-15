@@ -31,6 +31,20 @@
       <button class="chip" id="qa-active">SWEEP</button
       ><button class="chip" id="qa-results">RESULTS</button
       ><button class="chip" id="qa-language">RU / EN</button>
+      <select id="qa-hazard" aria-label="Hazard / combo">
+        <option value="10">Laser Grid</option><option value="11">Death Spin</option>
+        <option value="12">Meteor Madness</option><option value="13">Shockwave</option>
+        <option value="14">Hunter Swarm</option><option value="15">Danger Tiles</option>
+        <option value="16">Crossfire</option><option value="17">Final Collapse</option>
+        <option value="1,10">Zones + Grid</option><option value="1,11">Zones + Spin</option>
+        <option value="10,12">Grid + Madness</option><option value="10,13">Grid + Shockwave</option>
+        <option value="11,12">Spin + Madness</option><option value="11,13">Spin + Shockwave</option>
+        <option value="1,10,12">Zones + Grid + Madness</option><option value="1,11,13">Zones + Spin + Shockwave</option>
+      </select>
+      <button id="qa-warning" class="chip">WARNING</button><button id="qa-impact" class="chip">ACTIVE</button>
+      <button id="qa-animate" class="chip">ANIMATE</button>
+      <select id="qa-effects" aria-label="Effects"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select>
+      <output id="qa-metrics" style="font:10px monospace">Local renderer fixture; no network</output>
     </nav>
     <main id="app" style="padding-top: 56px">
       <header hidden><span id="header-note"></span></header>

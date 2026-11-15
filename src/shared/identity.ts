@@ -4,10 +4,16 @@ export const PALETTE = [
 ] as const;
 export function validateName(value: unknown): string | null {
   if (typeof value !== "string" || /[\p{Cc}\p{Cf}]/u.test(value)) return null;
-  const name = value.trim().normalize("NFC");
+  const name = value.trim().normalize("NFC").replace(/ +/g, ' ');
   return /^[\p{Script=Latin}\p{Script=Cyrillic}0-9 _-]{3,16}$/u.test(name)
     ? name
     : null;
+}
+// Existing stored names remain readable; this policy applies to new choices.
+export function validateNickname(value:unknown):string|null {
+ const name=validateName(value);
+ if(!name || /(?:^|[ _-])(admin(?:istrator)?|moderator|ruleshift|админ(?:истратор)?|модератор)(?:$|[ _-])/iu.test(name))return null;
+ return name;
 }
 export const validColor = (value: unknown): value is number =>
   Number.isInteger(value) &&

@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@simplewebauthn/server": "^14.0.3",
+    "jose": "^6.2.12",
     "phaser": "^3.90.0",
     "zod": "^3.25.76"
   },

@@ -20,6 +20,7 @@ export function loadModule(entry, globals = {}, overrides = {}) {
       code,
       {
         exports,
+        AbortController, setTimeout, clearTimeout,
         ...globals,
         require: (name) =>
           overrides[name] ?? load(resolve(dirname(file), name)),

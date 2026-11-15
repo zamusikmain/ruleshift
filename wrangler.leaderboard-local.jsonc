@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Local-only. Never deploy this configuration or apply remote migrations.
+  "name": "ruleshift-leaderboard-local",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [],
+  "assets": {"directory":"./dist","binding":"ASSETS","run_worker_first":["/api/*"]},
+  "durable_objects": {"bindings":[{"name":"ROOMS","class_name":"GameRoom"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["GameRoom"]}],
+  "d1_databases": [{"binding":"RANKINGS_DB","database_name":"ruleshift-rankings-local","database_id":"00000000-0000-0000-0000-000000000000","migrations_dir":"migrations/leaderboard"}],
+  "vars": {"AUTH_ORIGIN":"http://localhost:8787","AUTH_RP_ID":"localhost"}
+}
