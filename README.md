@@ -1,249 +1,601 @@
 # RULESHIFT
 
-**Rules change. Survive.** A dark neon survival arcade built with TypeScript and Phaser 3. Read the warning, adapt to the next rule, and stay alive. Play Solo or challenge friends in a private Last Alive room.
+**Rules change. Survive.**
 
-## RULESHIFT 2.0 development status
+**[Русский](#русский)** · **[English](#english)**
 
-The `feature/ruleshift-2-chaos-update` working tree now includes a responsive mode dashboard (five Offline and four Online modes), a four-tab personal profile, and a Leaderboard screen that explicitly reports that the global service is not connected. The redesign was published **only to [staging](https://ruleshift-2-staging.zamusik-play.workers.dev)** on 2026-10-09; production is unchanged. See the [deployment and remote QA record](docs/STAGING_UI_DEPLOYMENT_RU.md). Local XP, 17 achievements and saved personal records remain device-local and are not verified global rankings.
+---
 
-The existing v2.0 work includes eight additional hazards, six approved pairs, two triples, Daily/Survival progression and protocol v6. See [Offline modes](docs/OFFLINE_MODES.md), [player progress](docs/PLAYER_PROGRESS.md), [staging QA](docs/STAGING_QA.md), and the [UI verification report](docs/UI_REDESIGN_QA_RU.md). The [account/ranking architecture proposal](docs/LEADERBOARD_ARCHITECTURE_RU.md) requires approval before backend implementation. No authentication service, D1 rating database or real top-100 is implemented yet.
+# Русский
 
-Local RULESHIFT 2.1 now has eight more hazards, four additional conditional pairs, one additional Chaos triple and server-clock Overdrive windows. The local protocol is v8 because combined snapshots carry multiple threat layers. These changes have **not been deployed**. See the [stage 3 report and remaining QA](docs/OVERDRIVE_STAGE3_RU.md); Daily and device-local progress remain separate from global ratings.
+**Правила меняются. Выживи.** Тёмная неоновая survival-аркада на TypeScript и Phaser 3. Игрок читает
+предупреждение, подстраивается под новое правило и остаётся в живых. Можно играть одному (офлайн-режимы) или с
+друзьями в приватной онлайн-комнате на 2–8 игроков.
 
-The feature descriptions and limitations below document the earlier v1 release; use the linked v2.0 documents for the current development branch.
+## 1. Где поиграть
 
-## Live Demo
+| Окружение | Адрес | Версия |
+| --- | --- | --- |
+| Production | https://ruleshift.zamusik-play.workers.dev | v1 |
+| Staging | https://ruleshift-2-staging.zamusik-play.workers.dev | 2.x (UI, аккаунты, лидерборд) |
+| Remote MCP (production) | `https://ruleshift-mcp.zamusik-play.workers.dev/mcp` | только для MCP-клиентов с токеном |
 
-[Play RULESHIFT](https://ruleshift.zamusik-play.workers.dev)
+> **Важно.** С 2026-11-15 в `main` лежит код 2.x. Production-конфигурация `wrangler.jsonc` публикует то, что лежит
+> в рабочей папке, поэтому `npx wrangler deploy` из `main` выкатит 2.x в production. Делайте это только после QA.
 
-This is the existing production URL. The v2.0 redesign is not published there. Development and staging remain separate from production.
+## 2. Возможности
 
-## Features
+**Игра**
 
-- Ten rules with preparation windows, visible hazards, recovery phases, and no immediate repeats.
-- Compatible Chaos pairs after 60 seconds; increasing difficulty at 30 and 60 seconds.
-- Three HP, one-second damage immunity, survival scoring, and a capped ×5 rule streak bonus.
-- Local name, eight preset colors, statistics, eight achievements, and legacy best-score migration.
-- English and Russian, including rules, errors, lobby, results, and achievements.
-- Keyboard and analog touch controls with a dead zone and reliable pointer cancellation.
-- Private 2–8 player Last Alive rooms implemented using Cloudflare Durable Objects and WebSockets.
-- Procedural visuals and synthesized sound effects: no downloaded art, fonts, or audio assets.
+- 10 базовых правил с фазами «предупреждение → активная фаза → восстановление», без повторов подряд.
+- Дополнительные опасности 2.x: лазерные сетки, «взрывы», перекрёстный огонь, обрушение пола, импульсы, рои плиток,
+  Overdrive-окна по серверным часам; разрешённые Chaos-пары и тройки.
+- 3 HP, секунда неуязвимости после урона, очки за выживание и бонус серии чистых правил до ×5.
+- Способности и усиления: Dash, Shield, Speed, Pulse.
+- **Офлайн-режимы:** Classic, Survival (без лимита времени), Blitz (90 с), Chaos, Daily (90 с, сид от даты UTC).
+- **Онлайн-режимы:** Classic, Last One Standing, Blitz, Chaos — комнаты на 2–8 игроков по шестизначному коду,
+  rematch в том же лобби.
+- Профиль на четыре вкладки, локальные XP, 17 достижений, личные рекорды, история Daily.
+- **Аккаунты (2.x, staging):** вход через Google, email-код, passkeys (WebAuthn) с recovery-кодами, гостевой режим;
+  выбор ника.
+- **Глобальный лидерборд (2.x, staging):** рейтинг по режимам, lifetime и сезоны UTC, своё место.
+- Английский и русский интерфейс; клавиатура и аналоговый тач-джойстик (размер 104–168 px).
+- Процедурная графика и синтезированный звук — без скачанных ассетов.
+- Отдельный Remote MCP-сервер для наблюдения за комнатами.
 
-## Solo Mode
+## 3. Стек технологий
 
-The original arena, movement feel, health model, and five rules are retained. Rules now have a renderer-independent simulation shared with Online.
+| Слой | Технологии |
+| --- | --- |
+| Язык | TypeScript 5.9 (клиент, Workers, MCP), немного JavaScript (тесты, скрипты) |
+| Клиент | Phaser 3.90 (canvas, игровой цикл), Vite 7, DOM-интерфейс + CSS, Web Audio API, Pointer Events, localStorage |
+| Сервер | Cloudflare Workers, Durable Objects (`GameRoom` — комната, `McpControl` — MCP), WebSockets |
+| База данных | Cloudflare D1 (SQLite) — аккаунты, сессии, рейтинги (`migrations/leaderboard/`) |
+| Аутентификация | `@simplewebauthn/server` (passkeys), `jose` (JWT/OAuth Google), email-коды через Resend, HttpOnly-cookie `__Host-` |
+| MCP | `@modelcontextprotocol/sdk` (stateless Streamable HTTP), Zod (валидация) |
+| Деплой | Wrangler 4 |
+| Тесты | Node built-in test runner (34 файла `tests/*.test.mjs`), smoke-тест онлайна, визуальный тест |
 
-| Rule            | What to do                                                                 |
-| --------------- | -------------------------------------------------------------------------- |
-| Keep Moving     | Do not stand still for 1.2 seconds. Pushing against a wall does not count. |
-| Danger Zones    | Leave the marked circles before the 1.5-second warning ends.               |
-| Center Now      | Reach the center circle within 4 seconds, reducing to 3.5 on Hard.         |
-| Dodge           | Avoid projectiles aimed at a player's position when they spawn.            |
-| Don't Move      | Prepare for 1.8 seconds, freeze for 2 seconds, then wait for release.      |
-| Laser Sweep     | Avoid a descending beam; use the gaps at its ends.                         |
-| Shrinking Arena | Stay inside the gradually contracting safe border.                         |
-| Hunter          | Keep away from a slower pursuer after its warning.                         |
-| Meteor Shower   | Leave targeted circles before impact, 1.25 seconds after marking.          |
-| Symbol Match    | Reach the requested I / II / III zone. Symbols supplement color.           |
-
-Each cycle has a 1.5-second announcement, 4–6 active seconds, and a 2.5-second recovery. Hazards are cleared between rules. Chaos uses an explicit allowlist: Keep Moving + Meteor Shower, Keep Moving + Hunter, or Dodge + Shrinking Arena.
-
-Score increases by 10 per second. A clean rule awards `100 × min(streak, 5)` per rule in the round. Violations reset the streak, including violations during damage immunity. The game pauses on focus loss in Solo; resume explicitly or end the run from the pause screen.
-
-## Online Multiplayer
-
-Create a room, share its six-character code, and ask friends to join. Names do not have to be unique: the server issues independent player IDs and reconnect tokens. Duplicate preferred colors are reassigned only inside that room.
-
-The host starts when 2–8 connected players are ready. A three-second countdown leads into Last Alive. All players share the same rules and hazards. Eliminated players become spectators and cannot submit effective movement input. The final survivor wins; simultaneous elimination is a draw. The host can return everyone to the same lobby for a rematch. Readiness resets between matches.
-
-The server owns movement, HP, collision checks, elimination, rule selection, timing, hazards, match state, and winner selection. Clients send normalized input at 20 Hz; snapshots are broadcast at 20 Hz while playing. Player rendering interpolates toward authoritative positions. There is no client authority over score or health and no rollback/prediction engine.
-
-Disconnected players stop receiving input immediately and remain vulnerable. An in-memory reconnect token allows the same tab to reconnect within eight seconds. After grace expires, a disconnected participant forfeits; lobby host ownership transfers. Refreshing the page loses the token. Online matches do not pause when a tab is hidden or a device rotates. Idle rooms expire after 15 minutes; matches are capped at ten minutes and end in a draw if multiple survivors remain.
-
-**Verification status:** room simulation, protocol validation, and Worker handlers have automated coverage. Actual workerd-based WebSocket integration could not be executed on the development machine because Windows denied `workerd.exe` execution. Run the integration smoke test and two-device checklist before treating Online as production-verified.
-
-## Mobile Support
-
-The canvas keeps the original 1160 × 720 logical resolution and aspect ratio. Layout uses dynamic viewport units and safe-area insets. Coarse-pointer touch devices show an orientation overlay in portrait. Desktop windows do not show that overlay.
-
-The touch joystick supports 360-degree analog movement, a 16% dead zone, pointer capture, and reset on pointer up, cancel, lost capture, blur, visibility change, or resize. Gameplay suppresses accidental scroll and selection inside the game surface; menus and profile panels remain scrollable. Primary controls have at least 44-pixel touch targets.
-
-Desktop browser layouts were inspected at 844 × 390 and 1024 × 768. These are viewport checks, **not** physical Android/iPhone/iPad certification. See [manual QA](docs/QA.md) for the remaining device tests.
-
-## AI Agent / MCP Integration
-
-RULESHIFT includes a separate production **Remote MCP Server** using the official Model Context Protocol SDK and stateless Streamable HTTP. It inspects the live game's redacted authoritative state through a private Cloudflare Service Binding. It does not change Solo, gameplay rules, the public game URL or the multiplayer WebSocket protocol.
+## 4. Архитектура
 
 ```text
-AI agent / MCP client --HTTPS + bearer token--> ruleshift-mcp Worker
-                                                |             |
-                                   private Service Binding    McpControl DO
-                                                |             monitoring + audit
-                              ruleshift / GameInspection --> GameRoom
+Офлайн-игрок ──> Vite/Phaser клиент ──> общая игровая логика (src/shared) в браузере
+
+Онлайн-игрок ──> WebSocket ──> Worker ruleshift (/api/rooms)
+                                 └> Durable Object GameRoom — авторитетная симуляция комнаты
+                                      └> по итогам матча — запись результата в D1 (рейтинг)
+
+Аккаунт ──> /api/auth/*, /api/account/*, /api/leaderboard ──> D1 (accounts, sessions, ratings…)
+
+MCP-клиент ──> Worker ruleshift-mcp (/mcp, Bearer-токен)
+                 ├> Durable Object McpControl (наблюдение, лимиты, аудит)
+                 └> приватный Service Binding ──> ruleshift#GameInspection ──> GameRoom.inspect()
 ```
 
-Production endpoint: `https://ruleshift-mcp.zamusik-play.workers.dev/mcp`. A production smoke-test has confirmed Bearer authentication, MCP `initialize`, `tools/list`, `get_game_status`, `get_game_config`, `get_active_matches`, and the private `ruleshift#GameInspection` Service Binding.
+- `src/shared/` — бизнес-правила без Phaser и Cloudflare: движение, правила, опасности, комната, протокол,
+  рейтинг. Один и тот же код работает в офлайне (в браузере) и на сервере (в Durable Object).
+- Сервер владеет движением, HP, коллизиями, выбыванием, выбором правил, таймингом и победителем. Клиент шлёт
+  нормализованный ввод 20 раз в секунду и получает снимки 20 раз в секунду; клиентской власти над очками и HP нет.
+- Сетевой протокол — версия 8 (снимки несут несколько слоёв угроз).
 
-The six currently discoverable read-only tools are `get_game_status`, `get_active_matches`, `get_match_details`, `get_game_config`, `get_server_stats`, and `get_recent_events`. Lists/statistics cover only explicitly monitored rooms; recent events are the bounded MCP audit, not invented gameplay history. The existing backend has no global match registry or lifetime metrics.
-
-Write tools: `watch_room` and `unwatch_room`, protected by operator credentials, a disabled-by-default write flag, strict validation, revision checks and atomic audit logging. They manage monitoring without modifying a match. Human confirmation is a responsibility of the MCP client/agent before calling a write tool.
-
-The MCP Worker remains a separate deployment configured by `wrangler.mcp.jsonc`; the normal game pipeline does not publish it. `MCP_KEYS` is stored only as a Cloudflare Secret and `MCP_WRITES_ENABLED` remains `false`. Connect using Streamable HTTP with a provisioned Bearer Authorization header. OAuth-only clients are not supported by this authentication model.
-
-See [MCP architecture, security, client examples and deployment instructions](docs/MCP.md). A read-only SDK example is available at `scripts/mcp-client.mjs`; set `RULESHIFT_MCP_URL` and `RULESHIFT_MCP_TOKEN` through your local secret manager before running it. `npm test` includes protocol tests with the real SDK; `npm run check:mcp` performs an unpublished Cloudflare bundling dry run.
-
-## Localization
-
-Typed English and Russian dictionaries live in `src/locales/`. The first launch uses Russian for a Russian browser locale and English otherwise. A manual selection is stored separately and takes precedence on future visits. Menu language changes apply immediately. System Arial/sans-serif fonts support Latin and Cyrillic.
-
-## Controls
-
-| Action              | Control                             |
-| ------------------- | ----------------------------------- |
-| Move                | WASD, arrow keys, or touch joystick |
-| Stop on touch       | Release the joystick                |
-| Pause / resume Solo | Escape or the pause button          |
-| End Solo            | Pause → End Run                     |
-| Leave Online        | The × button or Leave Room          |
-| Language / sound    | Menu or Profile settings            |
-
-Sound is synthesized with Web Audio and starts only after user interaction. Muting is saved locally. Audio failure does not prevent play.
-
-## Architecture
+## 5. Структура проекта
 
 ```text
 src/
-  scenes/ArenaScene.ts     Existing Solo orchestration, menu transitions, effects
-  arena.ts                Shared procedural arena rendering
-  player.ts               Solo player using shared movement and input
-  playerView.ts           Shared procedural player appearance
-  input.ts                Keyboard + pointer joystick -> normalized input
-  rules.ts                Solo adapter around the shared rule engine
-  ruleView.ts             Rendering authoritative hazard snapshots
-  shared/
-    movement.ts           Platform-independent movement and damage
-    ruleEngine.ts         Ten rules, transitions, hazards, compatibility
-    room.ts               Last Alive room and match state machine
-    protocol.ts           Network types and strict client message validation
-    identity.ts           Display name, palette and room-code validation
-    scoring.ts            Rule bonuses and streaks
-  online/client.ts        Room UI, WebSocket lifecycle, snapshots, interpolation
-  locales/                Typed EN/RU text dictionaries
-  profile.ts              Versioned persistence, migration, statistics, achievements
-  ui.ts / hud.ts          DOM screens and responsive HUD
-  audio.ts / device.ts    Synthesized cues and orientation handling
-worker/index.ts           HTTP routing + one GameRoom Durable Object per room
-tests/                    Rules, profile, input, protocol, room and Worker tests
+  main.ts, config.ts       точка входа и настройки
+  scenes/ArenaScene.ts     офлайн-игра, переходы меню, эффекты
+  arena.ts, player.ts, playerView.ts, ruleView.ts, effects.ts   отрисовка
+  input.ts, controlSettings.ts   клавиатура + джойстик → нормализованный ввод
+  rules.ts                 офлайн-адаптер общего движка правил
+  shared/                  ruleEngine, variants, modes, movement, room, protocol, identity, scoring,
+                           pickups, progression, offlineProgress, rating, leaderboardContract,
+                           опасности: laserHazards, burstHazards, crossfire, collapse, pulse,
+                           swarmTiles, overdriveHazards, comboSafety
+  online/client.ts         UI комнаты, WebSocket, снимки, интерполяция
+  authEntry.ts, accountView.ts, accountProfile.ts   вход и аккаунт
+  leaderboardApi.ts, leaderboardView.ts             лидерборд
+  ui.ts, uiModel.ts, hud.ts, featureView.ts         экраны и HUD
+  profile.ts, storage.ts   локальный профиль, миграции, статистика, достижения
+  audio.ts, device.ts      синтез звука, ориентация экрана
+  locales/                 словари EN/RU
+worker/
+  index.ts                 HTTP-маршруты + Durable Object GameRoom
+  accountApi.ts, accounts.ts, simpleAuth.ts, authFailure.ts   аккаунты, passkeys, Google, email
+  rankings.ts, roomRankings.ts   рейтинги и запись результатов матчей
+  observability.ts         приватный GameInspection для MCP
+  staging-retired.ts       заглушка для выведенного staging
+mcp/                       Remote MCP: index, server, auth, contracts, control
+migrations/leaderboard/    SQL-миграции D1 (0001–0004)
+scripts/                   mcp-client.mjs, auth-diagnostics.mjs, leaderboard-browser-qa.js
+tests/                     тесты правил, режимов, протокола, комнаты, Worker, аккаунтов, рейтинга, UI
+docs/                      отчёты по этапам, QA, staging, MCP, архитектура лидерборда
+wrangler.jsonc             production-игра
+wrangler.staging.jsonc, wrangler.staging-leaderboard.jsonc, wrangler.staging-retire.jsonc   staging
+wrangler.leaderboard-local.jsonc   локальная D1
+wrangler.mcp.jsonc         MCP Worker
+Start.bat                  локальный запуск (Windows)
 ```
 
-Solo runs entirely in the browser. Online adds only the Cloudflare room server. Shared simulation has no Phaser or DOM dependency. Room orchestration is separate from the renderer so future modes can reuse movement, hazards, identity, and transport.
+## 6. Данные
 
-Persistent local data uses `ruleshift.profile.v1` and `ruleshift.language`. The old `ruleshift.best` value is migrated. Local data is convenience data, never a source of competitive server authority. No accounts, database-backed profiles, chat, analytics, or frontend secrets are required.
+**D1 (только при подключённой базе `RANKINGS_DB`):**
 
-## Tech Stack
+| Таблица | Что хранит |
+| --- | --- |
+| `accounts` | Аккаунт: UUID, отображаемое имя (ник), даты |
+| `credentials` | Публичные ключи passkeys |
+| `sessions` | Сессии (хеши токенов) |
+| `auth_challenges` | Одноразовые WebAuthn-челленджи |
+| `recovery_codes` | Хеши кодов восстановления |
+| `auth_identities` | Привязанные способы входа (Google, email) |
+| `login_flows` | Незавершённые входы через Google/email-код |
+| `account_nickname_choices` | Отметки выбора ника и лимит смены |
+| `seasons` | Сезоны рейтинга (UTC) |
+| `matches`, `participants` | Сыгранные матчи и их участники |
+| `ratings` | Рейтинг по режиму × (lifetime / сезон) |
+| `settlement_ledger`, `settlement_revision`, `settlement_guard` | Журнал начисления рейтинга (идемпотентность) |
+| `pair_history` | История пар игроков (защита от фарма) |
+| `request_limits` | Лимиты запросов |
 
-- TypeScript
-- Phaser 3
-- Vite
-- Cloudflare Workers
-- SQLite-backed Durable Object namespace (ephemeral game state is held in memory)
-- WebSockets
-- Wrangler
-- Browser Web Audio / Pointer Events / localStorage
-- Node.js test runner
+**Durable Objects:** `GameRoom` держит матч в памяти (в хранилище — только отметка существования и alarm);
+`McpControl` хранит ревизию, до 20 наблюдаемых комнат, до 100 событий аудита и лимиты.
 
-## Local Development
+**Браузер:** `ruleshift.profile.v1` (имя, цвет, рекорды, достижения, офлайн-прогресс), `ruleshift.language`,
+настройки звука и джойстика (`ruleshift.controls.v1`, `ruleshift.joystick-pixels.v1`). Локальные данные не
+защищены от подделки и не дают глобального рейтинга.
 
-Use a recent Node.js LTS release; **Node 22.12+** is recommended (development checks used Node 24). Install dependencies:
+## 7. API
+
+| Группа | Метод и путь | Назначение |
+| --- | --- | --- |
+| Комнаты | `POST /api/rooms` | Создать комнату, вернуть код (проверка origin, 12 созданий в минуту) |
+| Комнаты | `GET /api/rooms/:code` + WebSocket Upgrade | Подключиться к комнате |
+| Протокол | WebSocket: `hello`, `ready`, `start`, `input`, `dash`, `shockwave`, `leave`, `ping` | Действия игрока, строгая валидация, лимит 70 сообщений/с |
+| Вход | `GET /api/auth/providers` | Какие способы входа включены |
+| Вход | `GET /api/auth/google/start`, `GET /api/auth/google/callback` | Вход через Google |
+| Вход | `POST /api/auth/email/start`, `POST /api/auth/email/verify` | Вход по коду на email |
+| Вход | `POST /api/auth/register/options`, `/register/verify`, `/login/options`, `/login/verify` | Passkeys |
+| Вход | `POST /api/auth/recover`, `POST /api/auth/logout` | Восстановление и выход |
+| Аккаунт | `GET /api/account/me`, `POST /api/account/nickname`, `POST /api/account/delete` | Профиль, ник, удаление |
+| Лидерборд | `GET /api/leaderboard`, `GET /api/leaderboard/me`, `GET /api/leaderboard/seasons` | Таблица, своё место, сезоны |
+| MCP | `POST /mcp` (отдельный Worker) | JSON-RPC: initialize, tools/list, tools/call |
+
+**MCP-инструменты (только чтение):** `get_game_status`, `get_active_matches`, `get_match_details`,
+`get_game_config`, `get_server_stats`, `get_recent_events`. Запись (`watch_room`, `unwatch_room`) — только для
+operator-токена и при `MCP_WRITES_ENABLED=true` (в production — `false`). Подробно: [docs/MCP.md](docs/MCP.md).
+
+## 8. Конфигурация и секреты
+
+| Имя | Где | Назначение |
+| --- | --- | --- |
+| `ROOMS` | binding | Durable Object `GameRoom` |
+| `ASSETS` | binding | Статика из `dist/` |
+| `RANKINGS_DB` | binding D1 | База аккаунтов и рейтинга (без неё аккаунты и лидерборд выключены) |
+| `AUTH_ORIGIN`, `AUTH_RP_ID` | vars | Origin и RP ID для passkeys и OAuth |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | секреты | Вход через Google |
+| `RESEND_API_KEY`, `EMAIL_FROM` | секреты / vars | Отправка email-кодов |
+| `AUTH_CODE_SECRET` | секрет | Подпись email-кодов (≥ 32 случайных байт) |
+| `MCP_KEYS` | секрет MCP Worker | Хеши Bearer-токенов MCP |
+| `MCP_WRITES_ENABLED` | var MCP Worker | Разрешить запись (по умолчанию `false`) |
+
+Секреты задаются через `npx wrangler secret put`, в файлах их нет. Подготовка: [docs/SIMPLE_AUTH_PREPARATION_RU.md](docs/SIMPLE_AUTH_PREPARATION_RU.md).
+
+## 9. Как играть
+
+### Правила
+
+| Правило | Что делать |
+| --- | --- |
+| Keep Moving | Не стоять на месте 1,2 с (упор в стену не считается) |
+| Danger Zones | Уйти из отмеченных кругов до конца 1,5-секундного предупреждения |
+| Center Now | Добежать до центра за 4 с (3,5 на Hard) |
+| Dodge | Уклоняться от снарядов, летящих туда, где игрок был при их появлении |
+| Don't Move | Подготовка 1,8 с, замереть на 2 с, ждать отпускания |
+| Laser Sweep | Увернуться от опускающегося луча через зазоры по краям |
+| Shrinking Arena | Оставаться внутри сужающейся границы |
+| Hunter | Держаться подальше от медленного преследователя |
+| Meteor Shower | Уйти из отмеченных кругов за 1,25 с до удара |
+| Symbol Match | Добраться до зоны I / II / III (символы дополняют цвет) |
+
+Цикл: анонс → 4–6 с активной фазы → восстановление. Очки: +10 в секунду, за чистое правило — `100 × min(серия, 5)`.
+Нарушение сбрасывает серию.
+
+### Режимы
+
+| Режим | Где | Особенности |
+| --- | --- | --- |
+| Classic | офлайн и онлайн | Базовый темп |
+| Survival | офлайн | Без лимита времени, растущая сложность |
+| Blitz | офлайн и онлайн | 90 секунд, короткие паузы |
+| Chaos | офлайн и онлайн | Комбинации правил с самого начала |
+| Daily | офлайн | 90 с, одинаковый для всех сценарий дня (сид от даты UTC), локальная медаль |
+| Last One Standing | онлайн | Побеждает последний выживший |
+
+### Онлайн
+
+Создайте комнату, поделитесь кодом из шести символов. Хост запускает матч, когда готовы 2–8 игроков. Выбывшие
+становятся зрителями. Отключившийся игрок может вернуться в той же вкладке за 8 секунд. Пустые комнаты живут
+15 минут, матч — не дольше 10 минут.
+
+### Управление
+
+| Действие | Управление |
+| --- | --- |
+| Движение | WASD, стрелки или тач-джойстик |
+| Пауза (офлайн) | Escape или кнопка паузы |
+| Выйти из комнаты | Кнопка × или «Покинуть комнату» |
+| Язык, звук, джойстик | Меню или настройки профиля |
+
+## 10. Установка и запуск
+
+Нужен Node.js 22.12+ (проверялось на Node 24).
 
 ```sh
 npm ci
+npm run dev          # офлайн и UI: http://127.0.0.1:5173
 ```
 
-Solo and frontend development:
-
-```sh
-npm run dev
-```
-
-Open the Vite address, normally `http://127.0.0.1:5173`.
-
-Full local Cloudflare application:
+Полное приложение с онлайн-комнатами (локальный Cloudflare runtime):
 
 ```sh
 npm run build
-npm run dev:online
+npm run dev:online   # http://127.0.0.1:8787, откройте в двух окнах
 ```
 
-Open `http://127.0.0.1:8787` in two browser windows/profiles. Wrangler uses local Durable Objects; it does not deploy this application. The command serves the built `dist/`, so rebuild after frontend edits. For frontend HMR, keep Wrangler running and use `npm run dev` in another terminal; Vite proxies `/api` and WebSockets to port 8787.
+Локально с аккаунтами и рейтингом — конфигурация `wrangler.leaderboard-local.jsonc` (локальная D1).
+MCP локально: `npm run dev:mcp` (порт 8788). На Windows можно запустить `Start.bat`.
 
-For a physical device on your trusted LAN, explicitly run `npx wrangler dev --ip 0.0.0.0 --port 8787` and open the computer's LAN address on the same Wi-Fi network. This exposes the local development server to that LAN. Prefer an HTTPS deployment you control for final Safari/device testing. Do not use Wrangler's remote development mode as a substitute for local tests.
-
-Checks:
+## 11. Проверки и тесты
 
 ```sh
-npm test
-npm run typecheck
+npm test               # unit-тесты (node --test tests/*.test.mjs)
+npm run typecheck      # клиент, Worker и MCP
 npm run build
 npx wrangler deploy --dry-run
+npm run check:mcp      # сборка MCP Worker без публикации
+npm run test:online    # при запущенном dev:online — реальный HTTP/WebSocket smoke-тест
 ```
 
-With the local Wrangler server running:
+Тесты покрывают правила и опасности, режимы, комбинации, протокол, комнату, Worker, аккаунты, passkeys,
+email/Google-вход, рейтинг и settlement, офлайн-прогресс, UI-модели, джойстик, MCP.
+
+## 12. Деплой
+
+- **Production:** `npx wrangler deploy` (конфигурация `wrangler.jsonc`, Worker `ruleshift`). Только после
+  `npm ci`, `npm test`, `npm run build`, dry-run и QA на устройствах.
+- **Staging:** `wrangler.staging-leaderboard.jsonc` (Worker `ruleshift-2-staging`, своя D1
+  `ruleshift-2-staging-rankings`). Порядок, откат и удаление: [docs/STAGING.md](docs/STAGING.md),
+  [docs/STAGING_LEADERBOARD_DEPLOYMENT_RU.md](docs/STAGING_LEADERBOARD_DEPLOYMENT_RU.md).
+- **MCP:** `npx wrangler deploy --config wrangler.mcp.jsonc` — отдельно от игры.
+
+## 13. Ветки и статус
+
+| Ветка | Что в ней |
+| --- | --- |
+| `main` | **Актуальный код 2.x** (2026-11-15 в него влита `feature/ruleshift-2-chaos-update`) |
+| `feature/ruleshift-2-chaos-update` | Совпадает с `main` |
+
+**Статус:**
+
+- Production работает на v1.
+- Staging: UI 2.x, аккаунты (Google, passkeys) и лидерборд проверены реальными матчами Blitz, Chaos и
+  Last One Standing (2026-10-10, [docs/FINAL_STAGING_HARDENING_RU.md](docs/FINAL_STAGING_HARDENING_RU.md)).
+- Локально, ещё не на staging: исправление раннего завершения Blitz, email-вход и выбор ника (миграция
+  `0004_simple_auth.sql`), Overdrive (протокол v8), регулировка джойстика.
+- Этап 5 Overdrive не завершён: Phase, Magnet, Perfect Dodge, Risk Zones, Bonus Rush, Clutch Save не реализованы.
+
+## 14. Планы
+
+- [ ] Применить миграцию `0004` на staging, задать секреты Google/Resend, выкатить и перепроверить Blitz.
+- [ ] Пройти QA на физических устройствах (Android, iPhone, iPad), мультитач и FPS.
+- [ ] Завершить этап 5 Overdrive (новые способности и события).
+- [ ] Выпустить 2.x в production: production D1, секреты, деплой.
+- [ ] Балансировка сложности по итогам плейтестов.
+
+## 15. Ограничения
+
+- Комнаты эфемерны: перезапуск или деплой Durable Object завершает матчи.
+- Переподключение — только та же вкладка в течение 8 секунд.
+- Нет предсказания на клиенте и компенсации задержки.
+- Лимит создания комнат — на изолят Worker, а не глобальный.
+- Локальная статистика не защищена от подделки.
+- Реальная работа на телефонах и планшетах проверена не полностью.
+
+---
+
+# English
+
+**Rules change. Survive.** A dark neon survival arcade built with TypeScript and Phaser 3. Read the warning, adapt to
+the next rule and stay alive. Play alone (offline modes) or with friends in a private online room for 2–8 players.
+
+## 1. Where to play
+
+| Environment | Address | Version |
+| --- | --- | --- |
+| Production | https://ruleshift.zamusik-play.workers.dev | v1 |
+| Staging | https://ruleshift-2-staging.zamusik-play.workers.dev | 2.x (UI, accounts, leaderboard) |
+| Remote MCP (production) | `https://ruleshift-mcp.zamusik-play.workers.dev/mcp` | MCP clients with a token only |
+
+> **Important.** Since 2026-11-15 `main` contains the 2.x code. The production config `wrangler.jsonc` publishes
+> whatever is in the working folder, so `npx wrangler deploy` from `main` ships 2.x to production. Only do that
+> after QA.
+
+## 2. Features
+
+**Game**
+
+- 10 base rules with "warning → active → recovery" phases and no immediate repeats.
+- 2.x hazards: laser grids, bursts, crossfire, floor collapse, pulses, tile swarms, Overdrive windows on the server
+  clock; approved Chaos pairs and triples.
+- 3 HP, one second of immunity after damage, survival score and a clean-rule streak bonus up to ×5.
+- Abilities and power-ups: Dash, Shield, Speed, Pulse.
+- **Offline modes:** Classic, Survival (no time limit), Blitz (90 s), Chaos, Daily (90 s, seed from the UTC date).
+- **Online modes:** Classic, Last One Standing, Blitz, Chaos — rooms for 2–8 players by a six-character code,
+  rematch in the same lobby.
+- Four-tab profile, local XP, 17 achievements, personal records, Daily history.
+- **Accounts (2.x, staging):** Google sign-in, email code, passkeys (WebAuthn) with recovery codes, guest mode;
+  nickname choice.
+- **Global leaderboard (2.x, staging):** ratings per mode, lifetime and UTC seasons, your own place.
+- English and Russian UI; keyboard and analog touch joystick (104–168 px).
+- Procedural visuals and synthesized sound — no downloaded assets.
+- A separate Remote MCP server for monitoring rooms.
+
+## 3. Tech stack
+
+| Layer | Technologies |
+| --- | --- |
+| Language | TypeScript 5.9 (client, Workers, MCP), some JavaScript (tests, scripts) |
+| Client | Phaser 3.90 (canvas, game loop), Vite 7, DOM UI + CSS, Web Audio API, Pointer Events, localStorage |
+| Server | Cloudflare Workers, Durable Objects (`GameRoom` — a room, `McpControl` — MCP), WebSockets |
+| Database | Cloudflare D1 (SQLite) — accounts, sessions, ratings (`migrations/leaderboard/`) |
+| Authentication | `@simplewebauthn/server` (passkeys), `jose` (JWT/Google OAuth), email codes via Resend, `__Host-` HttpOnly cookie |
+| MCP | `@modelcontextprotocol/sdk` (stateless Streamable HTTP), Zod (validation) |
+| Deployment | Wrangler 4 |
+| Tests | Node built-in test runner (34 `tests/*.test.mjs` files), online smoke test, visual test |
+
+## 4. Architecture
+
+```text
+Offline player ──> Vite/Phaser client ──> shared game logic (src/shared) in the browser
+
+Online player ──> WebSocket ──> ruleshift Worker (/api/rooms)
+                                 └> GameRoom Durable Object — authoritative room simulation
+                                      └> after a match — result written to D1 (rating)
+
+Account ──> /api/auth/*, /api/account/*, /api/leaderboard ──> D1 (accounts, sessions, ratings…)
+
+MCP client ──> ruleshift-mcp Worker (/mcp, Bearer token)
+                 ├> McpControl Durable Object (monitoring, limits, audit)
+                 └> private Service Binding ──> ruleshift#GameInspection ──> GameRoom.inspect()
+```
+
+- `src/shared/` holds business rules with no Phaser or Cloudflare dependency: movement, rules, hazards, room,
+  protocol, rating. The same code runs offline (in the browser) and on the server (in a Durable Object).
+- The server owns movement, HP, collisions, elimination, rule selection, timing and the winner. Clients send
+  normalized input at 20 Hz and receive snapshots at 20 Hz; clients have no authority over score or HP.
+- Network protocol version 8 (snapshots carry several threat layers).
+
+## 5. Project structure
+
+```text
+src/
+  main.ts, config.ts       entry point and settings
+  scenes/ArenaScene.ts     offline game, menu transitions, effects
+  arena.ts, player.ts, playerView.ts, ruleView.ts, effects.ts   rendering
+  input.ts, controlSettings.ts   keyboard + joystick → normalized input
+  rules.ts                 offline adapter for the shared rule engine
+  shared/                  ruleEngine, variants, modes, movement, room, protocol, identity, scoring,
+                           pickups, progression, offlineProgress, rating, leaderboardContract,
+                           hazards: laserHazards, burstHazards, crossfire, collapse, pulse,
+                           swarmTiles, overdriveHazards, comboSafety
+  online/client.ts         room UI, WebSocket, snapshots, interpolation
+  authEntry.ts, accountView.ts, accountProfile.ts   sign-in and account
+  leaderboardApi.ts, leaderboardView.ts             leaderboard
+  ui.ts, uiModel.ts, hud.ts, featureView.ts         screens and HUD
+  profile.ts, storage.ts   local profile, migrations, statistics, achievements
+  audio.ts, device.ts      sound synthesis, screen orientation
+  locales/                 EN/RU dictionaries
+worker/
+  index.ts                 HTTP routing + GameRoom Durable Object
+  accountApi.ts, accounts.ts, simpleAuth.ts, authFailure.ts   accounts, passkeys, Google, email
+  rankings.ts, roomRankings.ts   ratings and match result recording
+  observability.ts         private GameInspection for MCP
+  staging-retired.ts       stub for a retired staging
+mcp/                       Remote MCP: index, server, auth, contracts, control
+migrations/leaderboard/    D1 SQL migrations (0001–0004)
+scripts/                   mcp-client.mjs, auth-diagnostics.mjs, leaderboard-browser-qa.js
+tests/                     rules, modes, protocol, room, Worker, accounts, rating, UI tests
+docs/                      stage reports, QA, staging, MCP, leaderboard architecture
+wrangler.jsonc             production game
+wrangler.staging.jsonc, wrangler.staging-leaderboard.jsonc, wrangler.staging-retire.jsonc   staging
+wrangler.leaderboard-local.jsonc   local D1
+wrangler.mcp.jsonc         MCP Worker
+Start.bat                  local launcher (Windows)
+```
+
+## 6. Data
+
+**D1 (only when the `RANKINGS_DB` database is bound):**
+
+| Table | Contents |
+| --- | --- |
+| `accounts` | Account: UUID, display name (nickname), dates |
+| `credentials` | Passkey public keys |
+| `sessions` | Sessions (token hashes) |
+| `auth_challenges` | Single-use WebAuthn challenges |
+| `recovery_codes` | Recovery code hashes |
+| `auth_identities` | Linked sign-in methods (Google, email) |
+| `login_flows` | Pending Google/email-code sign-ins |
+| `account_nickname_choices` | Nickname choice markers and change limit |
+| `seasons` | Rating seasons (UTC) |
+| `matches`, `participants` | Played matches and their participants |
+| `ratings` | Rating per mode × (lifetime / season) |
+| `settlement_ledger`, `settlement_revision`, `settlement_guard` | Rating settlement ledger (idempotency) |
+| `pair_history` | Player pair history (anti-farming) |
+| `request_limits` | Request limits |
+
+**Durable Objects:** `GameRoom` keeps the match in memory (storage holds only an existence marker and an alarm);
+`McpControl` stores a revision, up to 20 monitored rooms, up to 100 audit events and limits.
+
+**Browser:** `ruleshift.profile.v1` (name, color, records, achievements, offline progress), `ruleshift.language`,
+sound and joystick settings (`ruleshift.controls.v1`, `ruleshift.joystick-pixels.v1`). Local data is not
+tamper-proof and gives no global rating.
+
+## 7. API
+
+| Group | Method and path | Purpose |
+| --- | --- | --- |
+| Rooms | `POST /api/rooms` | Create a room, return the code (origin check, 12 creations per minute) |
+| Rooms | `GET /api/rooms/:code` + WebSocket Upgrade | Join a room |
+| Protocol | WebSocket: `hello`, `ready`, `start`, `input`, `dash`, `shockwave`, `leave`, `ping` | Player actions, strict validation, 70 messages/s limit |
+| Sign-in | `GET /api/auth/providers` | Which sign-in methods are enabled |
+| Sign-in | `GET /api/auth/google/start`, `GET /api/auth/google/callback` | Google sign-in |
+| Sign-in | `POST /api/auth/email/start`, `POST /api/auth/email/verify` | Email code sign-in |
+| Sign-in | `POST /api/auth/register/options`, `/register/verify`, `/login/options`, `/login/verify` | Passkeys |
+| Sign-in | `POST /api/auth/recover`, `POST /api/auth/logout` | Recovery and sign-out |
+| Account | `GET /api/account/me`, `POST /api/account/nickname`, `POST /api/account/delete` | Profile, nickname, deletion |
+| Leaderboard | `GET /api/leaderboard`, `GET /api/leaderboard/me`, `GET /api/leaderboard/seasons` | Table, your place, seasons |
+| MCP | `POST /mcp` (separate Worker) | JSON-RPC: initialize, tools/list, tools/call |
+
+**MCP tools (read-only):** `get_game_status`, `get_active_matches`, `get_match_details`, `get_game_config`,
+`get_server_stats`, `get_recent_events`. Writes (`watch_room`, `unwatch_room`) need an operator token and
+`MCP_WRITES_ENABLED=true` (`false` in production). Details: [docs/MCP.md](docs/MCP.md).
+
+## 8. Configuration and secrets
+
+| Name | Where | Purpose |
+| --- | --- | --- |
+| `ROOMS` | binding | `GameRoom` Durable Object |
+| `ASSETS` | binding | Static files from `dist/` |
+| `RANKINGS_DB` | D1 binding | Accounts and rating database (without it accounts and leaderboard are off) |
+| `AUTH_ORIGIN`, `AUTH_RP_ID` | vars | Origin and RP ID for passkeys and OAuth |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | secrets | Google sign-in |
+| `RESEND_API_KEY`, `EMAIL_FROM` | secret / var | Email code delivery |
+| `AUTH_CODE_SECRET` | secret | Email code signing (≥ 32 random bytes) |
+| `MCP_KEYS` | MCP Worker secret | MCP Bearer token hashes |
+| `MCP_WRITES_ENABLED` | MCP Worker var | Allow writes (default `false`) |
+
+Secrets are set with `npx wrangler secret put`; none are in files. Preparation:
+[docs/SIMPLE_AUTH_PREPARATION_RU.md](docs/SIMPLE_AUTH_PREPARATION_RU.md).
+
+## 9. How to play
+
+### Rules
+
+| Rule | What to do |
+| --- | --- |
+| Keep Moving | Do not stand still for 1.2 s (pushing against a wall does not count) |
+| Danger Zones | Leave the marked circles before the 1.5-second warning ends |
+| Center Now | Reach the center within 4 s (3.5 on Hard) |
+| Dodge | Avoid projectiles aimed where a player was when they spawned |
+| Don't Move | Prepare 1.8 s, freeze 2 s, wait for release |
+| Laser Sweep | Avoid a descending beam using the gaps at its ends |
+| Shrinking Arena | Stay inside the contracting border |
+| Hunter | Keep away from a slower pursuer |
+| Meteor Shower | Leave targeted circles 1.25 s before impact |
+| Symbol Match | Reach the requested I / II / III zone (symbols supplement color) |
+
+Cycle: announcement → 4–6 active seconds → recovery. Score: +10 per second, a clean rule gives
+`100 × min(streak, 5)`. A violation resets the streak.
+
+### Modes
+
+| Mode | Where | Notes |
+| --- | --- | --- |
+| Classic | offline and online | Base pace |
+| Survival | offline | No time limit, rising difficulty |
+| Blitz | offline and online | 90 seconds, short rests |
+| Chaos | offline and online | Rule combinations from the start |
+| Daily | offline | 90 s, the same daily course for everyone (UTC date seed), local medal |
+| Last One Standing | online | Last survivor wins |
+
+### Online
+
+Create a room and share its six-character code. The host starts when 2–8 players are ready. Eliminated players
+spectate. A disconnected player can return in the same tab within 8 seconds. Idle rooms live 15 minutes; a match lasts
+at most 10 minutes.
+
+### Controls
+
+| Action | Control |
+| --- | --- |
+| Move | WASD, arrow keys or touch joystick |
+| Pause (offline) | Escape or the pause button |
+| Leave a room | The × button or "Leave Room" |
+| Language, sound, joystick | Menu or profile settings |
+
+## 10. Setup and launch
+
+Requires Node.js 22.12+ (checked on Node 24).
 
 ```sh
-npm run test:online
+npm ci
+npm run dev          # offline and UI: http://127.0.0.1:5173
 ```
 
-The integration script permits localhost only and checks actual HTTP/WebSocket create/join, colors, readiness, server movement, reconnect, winner by forfeit, and rematch. It is separate from unit tests. Worker-handler unit tests use simulated socket/runtime objects and are not a substitute for this test.
-
-If Windows reports `spawn EPERM` or denies `workerd.exe`, local Cloudflare runtime verification is blocked by the machine environment. Do not disable security controls or deploy to work around it; ask the machine administrator to resolve the runtime restriction, then repeat the local checks. Vite Solo, TypeScript, unit tests, and Wrangler's bundling dry run can still be checked independently.
-
-## Production Build
+Full app with online rooms (local Cloudflare runtime):
 
 ```sh
 npm run build
+npm run dev:online   # http://127.0.0.1:8787, open in two windows
 ```
 
-This type-checks both client and Worker code and builds the frontend into `dist/`. Wrangler bundles `worker/index.ts` separately. `npm run preview` previews static assets only; it does not start the room server. Phaser's bundle-size warning is informational; the build succeeds.
+Locally with accounts and ratings use `wrangler.leaderboard-local.jsonc` (local D1). MCP locally: `npm run dev:mcp`
+(port 8788). On Windows you can run `Start.bat`.
 
-## RULESHIFT 2.0 Staging
+## 11. Checks and tests
 
-The `feature/ruleshift-2-chaos-update` branch has an isolated staging configuration: `wrangler.staging.jsonc`, Worker `ruleshift-2-staging`, its own Durable Object namespace and same-origin client API/WebSockets. The first staging deployment is live at [ruleshift-2-staging.zamusik-play.workers.dev](https://ruleshift-2-staging.zamusik-play.workers.dev), with a two-client real HTTP/WebSocket smoke-test passed on 2026-10-09. Full multi-device/mobile QA is still pending. Do not use the normal production deploy command for this QA release.
+```sh
+npm test               # unit tests (node --test tests/*.test.mjs)
+npm run typecheck      # client, Worker and MCP
+npm run build
+npx wrangler deploy --dry-run
+npm run check:mcp      # MCP Worker bundle without publishing
+npm run test:online    # with dev:online running — real HTTP/WebSocket smoke test
+```
 
-See [staging build/deploy, rollback and teardown](docs/STAGING.md) and the [real network and mobile QA checklist](docs/STAGING_QA.md). Staging requires no game secrets and does not deploy or bind to the production MCP Worker. The teardown configuration deletes staging data irreversibly and is not a rollback.
+Tests cover rules and hazards, modes, combinations, the protocol, the room, the Worker, accounts, passkeys,
+email/Google sign-in, rating and settlement, offline progress, UI models, the joystick and MCP.
 
-## Cloudflare Deployment
+## 12. Deployment
 
-Only deploy after reviewing the changes and completing Online/device QA.
+- **Production:** `npx wrangler deploy` (`wrangler.jsonc`, Worker `ruleshift`). Only after `npm ci`, `npm test`,
+  `npm run build`, a dry run and device QA.
+- **Staging:** `wrangler.staging-leaderboard.jsonc` (Worker `ruleshift-2-staging`, its own D1
+  `ruleshift-2-staging-rankings`). Procedure, rollback and teardown: [docs/STAGING.md](docs/STAGING.md),
+  [docs/STAGING_LEADERBOARD_DEPLOYMENT_RU.md](docs/STAGING_LEADERBOARD_DEPLOYMENT_RU.md).
+- **MCP:** `npx wrangler deploy --config wrangler.mcp.jsonc` — separate from the game.
 
-1. Use the existing Cloudflare account that owns `ruleshift.zamusik-play.workers.dev`. Run `npx wrangler login`, then `npx wrangler whoami` to verify the account.
-2. Keep `name: "ruleshift"` in `wrangler.jsonc`; this updates the existing Worker. If your login can access multiple accounts, select the correct account when Wrangler asks or configure its account ID explicitly. No account ID is guessed in this repository.
-3. Inspect the config: `main` points to `worker/index.ts`; `ASSETS` serves `./dist`; only `/api/*` uses Worker-first routing; `ROOMS` binds to exported class `GameRoom`.
-4. Keep migration `v1` with `new_sqlite_classes: ["GameRoom"]`. On the first actual deployment, Wrangler creates the namespace and binding. No separate Dashboard-created Durable Object binding is needed. Do not remove or rename an applied migration; future class/storage changes need a new migration tag.
-5. Confirm the account permits Durable Objects and has suitable limits. This implementation uses regular WebSockets and a running room timer, not hibernation; connected room duration can incur usage charges. Review Cloudflare's applicable limits before public release.
-6. Run `npm ci`, `npm test`, `npm run build`, and `npx wrangler deploy --dry-run`.
-7. When you decide to publish, run **`npx wrangler deploy`** yourself. This publishes the Worker and assets together. No deployment has been executed as part of this change.
-8. Open the existing Live Demo and verify Solo, two-browser Online, reconnect, and a phone/desktop match. For an existing custom domain, retain its current route; none is guessed or added here.
+## 13. Branches and status
 
-If Cloudflare Workers Builds is connected to GitHub, use `npm run build` as the build command and `npx wrangler deploy` as the deploy command, with the repository root as the project directory.
+| Branch | Contents |
+| --- | --- |
+| `main` | **Current 2.x code** (`feature/ruleshift-2-chaos-update` merged in on 2026-11-15) |
+| `feature/ruleshift-2-chaos-update` | Same as `main` |
 
-## Known Limitations
+**Status:**
 
-- Native Cloudflare runtime execution was blocked on the development Windows machine; Online needs the real local integration and multi-browser QA before release.
-- Physical Android, iPhone, Android tablet, and iPad behavior remains to be verified. Viewport resizing alone cannot validate touch, Safari audio, safe areas, or suspension.
-- Rooms are ephemeral. A Durable Object restart or deployment ends in-memory matches. The UI asks players to create a new room; active matches are not restored from storage.
-- Reconnection is best-effort for the same tab within eight seconds. Mobile sleep, page refresh, or longer interruptions forfeit the session. Disconnected players remain vulnerable.
-- Only Last Alive is implemented. No matchmaking, accounts, persistent cloud profiles, chat, or global leaderboard.
-- Input interpolation favors simplicity over high-latency responsiveness. No lag compensation or client prediction.
-- Creation throttling is per Worker isolate, not a global anti-abuse service. WebSocket payload/type/value validation and per-connection rate limits are enforced; production-scale abuse protection may require Cloudflare edge rules.
-- Local stats are not tamper-proof and may be lost if storage is cleared/blocked. Names are validated, not moderated.
-- Difficulty and the new hazard/Chaos combinations need extended human balance playtests.
+- Production runs v1.
+- Staging: 2.x UI, accounts (Google, passkeys) and leaderboard verified with real Blitz, Chaos and Last One Standing
+  matches (2026-10-10, [docs/FINAL_STAGING_HARDENING_RU.md](docs/FINAL_STAGING_HARDENING_RU.md)).
+- Local only, not yet on staging: the early Blitz end fix, email sign-in and nickname choice (migration
+  `0004_simple_auth.sql`), Overdrive (protocol v8), joystick size slider.
+- Overdrive stage 5 is unfinished: Phase, Magnet, Perfect Dodge, Risk Zones, Bonus Rush and Clutch Save are not
+  implemented.
 
-## Roadmap
+## 14. Roadmap
 
-- Complete the device matrix, real workerd smoke test, and multi-client soak tests.
-- Tune warning visibility, mobile readability, latency, and late-game difficulty from playtests.
-- Consider durable room recovery and hibernating idle lobbies after measuring room usage.
-- Evaluate Hot Potato, Infected, King of the Hill, and Color Rush only after Last Alive is stable.
+- [ ] Apply migration `0004` on staging, set Google/Resend secrets, deploy and re-test Blitz.
+- [ ] QA on physical devices (Android, iPhone, iPad), multitouch and FPS.
+- [ ] Finish Overdrive stage 5 (new abilities and events).
+- [ ] Ship 2.x to production: production D1, secrets, deploy.
+- [ ] Balance difficulty from playtests.
 
-See [QA checklist and verification record](docs/QA.md) for release checks and the distinction between completed and pending verification.
+## 15. Limitations
+
+- Rooms are ephemeral: a Durable Object restart or deploy ends matches.
+- Reconnect works only in the same tab within 8 seconds.
+- No client prediction or lag compensation.
+- Room creation throttling is per Worker isolate, not global.
+- Local statistics are not tamper-proof.
+- Real phone and tablet behavior is not fully verified.
